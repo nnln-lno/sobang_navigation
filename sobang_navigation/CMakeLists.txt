@@ -81,12 +81,12 @@ target_link_libraries(sobang_navigation_lib
 # Install rules
 install(TARGETS
   sobang_navigation_node
-  EXPORT sobang_navigation_targets
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(TARGETS
   sobang_navigation_lib
+  EXPORT sobang_navigation_targets
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin

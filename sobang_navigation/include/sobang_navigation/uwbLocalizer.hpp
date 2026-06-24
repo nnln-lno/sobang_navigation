@@ -39,6 +39,8 @@ namespace navigation
         std::vector<Vec3d> anchor_positions_; // UWB Anchor positions in the world frame
 
         std::string uwb_topic_ = "/uwb/range";
+        bool imu_ned_ = false;
+        bool sim_sonar_ = false;
          // UWB Estimated position of the drone in the world frame
 
     private:

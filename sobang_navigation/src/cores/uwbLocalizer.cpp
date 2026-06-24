@@ -13,6 +13,8 @@ namespace navigation
         this->declare_parameter("anchor_pos_y", std::vector<double>{0.0, 0.0, 0.0});
         this->declare_parameter("anchor_pos_z", std::vector<double>{0.0, 0.0, 0.0});
         this->declare_parameter("num_anchors", 0);
+        this->declare_parameter("sim_sonar", false);
+        this->declare_parameter("is_imu_ned", false);
 
         std::vector<uint64_t> tmp;
 
@@ -20,6 +22,8 @@ namespace navigation
         this->get_parameter("anchor_pos_y", anchor_list_y_);
         this->get_parameter("anchor_pos_z", anchor_list_z_);
         this->get_parameter("uwb_topic", uwb_topic_);
+        this->get_parameter("sim_sonar", sim_sonar_);
+        this->get_parameter("is_imu_ned", imu_ned_);
 
         try
         {
@@ -81,8 +85,9 @@ namespace navigation
         {
             return;
         }
-        Vec3d opt_pos = getCurrentPosition();
 
+        Vec3d opt_pos = getCurrentPosition();
+        
         // std::cout << "Current Position: [" << opt_pos.transpose() << "], Received UWB Range Data: [";
         // Vec3d opt_pos = Vec3d{0.0, 0.0, 0.0}; // For testing without DR
 
@@ -181,7 +186,7 @@ namespace navigation
                 uwb_estimated_position_.point.z = pos_arr(2, min_idx);
 
                 uwb_position_publisher_->publish(uwb_estimated_position_);
-                RCLCPP_INFO(this->get_logger(), "Multilateration did not converge after full iteration with error %.4f", min_err);
+                // RCLCPP_INFO(this->get_logger(), "Multilateration did not converge after full iteration with error %.4f", min_err);
             }
         }
         // else if ((count >= 1) && (count <= 3))
@@ -230,15 +235,18 @@ namespace navigation
         uwb_marker_publisher_->publish(anchor_marker_array);
         uwb_text_publisher_->publish(text_marker_array);
 
-        sensor_msgs::msg::Range sonar_msg_;
-        sonar_msg_.header.frame_id = "map";
-        sonar_msg_.header.stamp = this->get_clock()->now();
+        if (sim_sonar_)
+        {
+            sensor_msgs::msg::Range sonar_msg_;
+            sonar_msg_.header.frame_id = "map";
+            sonar_msg_.header.stamp = this->get_clock()->now();
         
-        std::mt19937 rng{std::random_device{}()};
-        double ht = 0.96 + 0.1* std::normal_distribution<double>{0.0, 0.5}(rng); 
-        sonar_msg_.range = ht;
+            std::mt19937 rng{std::random_device{}()};
+            double ht = 0.96 + 0.1* std::normal_distribution<double>{0.0, 0.5}(rng); 
+            sonar_msg_.range = ht;
 
-        sonar_publisher_->publish(sonar_msg_);
+            sonar_publisher_->publish(sonar_msg_);
+        }        
     }
 
     void UWBLocalizer::setUwbMarker(uwbMeasurement uwb_info)

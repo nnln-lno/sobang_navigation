@@ -9,6 +9,8 @@ namespace navigation
     RadarEstimator::RadarEstimator()
     {
         std::cout << "Success initializing Radar Dead Reckoning Node." << std::endl;
+
+        setEgoVelocity(Vec3d{0.0, 0.0, 0.0});
     }
     
     bool RadarEstimator::radarParser(const sensor_msgs::msg::PointCloud2::SharedPtr &radar_msg)

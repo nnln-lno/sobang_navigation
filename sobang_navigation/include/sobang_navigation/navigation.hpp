@@ -33,6 +33,9 @@ public:
   Vec3d acc_accum{0.0, 0.0, 0.0};
   Vec3d gyro_accum{0.0, 0.0, 0.0};
 
+  Mat3d Cbr = Mat3d::Identity(); // Rotation from radar frame to body frame
+  Vec3d tbr = Vec3d::Zero(); // Translation from radar frame to
+
   Vec3d init_pos_ = Vec3d::Zero();
   Vec4d init_att_ = Vec4d::Zero();
   Vec3d init_gyro_bias_ = Vec3d::Zero();
@@ -45,8 +48,10 @@ public:
   Mat12d Qk = Mat12d::Zero();
 
   Mat3d R_uwb = Mat3d::Identity() * 5.5; // Measurement noise covariance for UWB
+  Mat1d R_sonar = Mat1d::Identity() * 0.1; // Measurement noise covariance for Sonar
 
-  uint8_t imu_rate = 200; // [HYPERPARAM] IMU data rate in Hz. Change this according to your IMU's actual data rate.
+  uint16_t imu_rate = 200; // [HYPERPARAM] IMU data rate in Hz. Change this according to your IMU's actual data rate.
+  uint16_t radar_rate = 20;
 
   double imu_previous_time_ = 0.0; // For calculating time delta in state estimation
   double imu_current_time_ = 0.0;
@@ -130,11 +135,11 @@ private:
   // othet uitls functions
   void initAlignment(const sensor_msgs::msg::Imu::SharedPtr msg);
 
-  void DeadReckoning(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt, Mat3d calib_rotation, Vec3d calib_translation);
+  void DeadReckoning(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt);
 
   // Filter Function
 
-  void timeUpdate(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt, Mat3d calib_rotation, Vec3d calib_translation);
+  void timeUpdate(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt);
 
   void measurementUpdate(const drState predicted_state, VecXd residual, MatXd Hk, MatXd Rk);
 
@@ -149,12 +154,16 @@ private:
   bool radar_update = false;
   bool uwb_update = false;
   bool stop_check = false;
+  bool do_align_ = true; // Flag to determine whether to perform initial alignment using IMU data
+  bool ned_ = false;
+  bool view_state_ = false;
 
   nav_msgs::msg::Path localPath;
   geometry_msgs::msg::PoseStamped pose;
 
   std::string imu_topic_ = "/vectornav/imu";
   std::string radar_topic_ = "/mmwave/radarScan";
+  std::string sonar_topic_ = "/sonar/range";
 
   icpState prev_state;
   icpState current_state;
@@ -165,6 +174,8 @@ private:
   int cur_cnt = 0;  
 
   void publishDronePath(Vec3d position, Vec4d quaternion);
+
+  void printStateInfo();
 
   // Timer for publishing
   rclcpp::TimerBase::SharedPtr timer_;
