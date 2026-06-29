@@ -38,7 +38,6 @@ namespace navigation
         num_anchors_ = anchor_id_lists_.size();
 
         uwb_marker_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/uwb/anchors", 10);
-        uwb_text_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/uwb/anchors_texts", 10);
 
         for(uint i=0; i < num_anchors_; i++)
         {
@@ -54,12 +53,6 @@ namespace navigation
             text_marker_array.markers.push_back(text_marker_);
 
             anchor_positions_.push_back(Vec3d(anchor_list_x_[i], -anchor_list_y_[i], anchor_list_z_[i]));
-
-            // RCLCPP_INFO(this->get_logger(), "Anchor ID: %d, Position: [%.2f, %.2f, %.2f]", 
-            //             uwb_struct_[i].anchor_id, 
-            //             uwb_struct_[i].anchor_position_x_, 
-            //             uwb_struct_[i].anchor_position_y_, 
-            //             uwb_struct_[i].anchor_position_z_);
         }
 
         mark_timer_ = this->create_wall_timer(100ms, std::bind(&UWBLocalizer::timer_callback, this));
@@ -96,6 +89,7 @@ namespace navigation
         std::vector<int> anc_id = msg->anchor_ids;
         std::vector<float> temp_res;
         
+        // TODO : 경량 NLOS 식별이 녹아있음, 현재 위치와 앵커 정보를 바탕으로 거리 임계를 설정하고, 그 임계값을 벗어나는 앵커는 제거하는 방식으로 구현되어 있음.
         for (int i = 0; i < (int)msg->dist.size(); i++)
         {
             dist[i] = msg->dist[i] * 1e-2;
@@ -189,25 +183,25 @@ namespace navigation
                 // RCLCPP_INFO(this->get_logger(), "Multilateration did not converge after full iteration with error %.4f", min_err);
             }
         }
-        // else if ((count >= 1) && (count <= 3))
-        // {
-        //     sobang_navigation::msg::UwbData uwb_range_array;
+        else if ((count >= 1) && (count <= 3))
+        {
+            sobang_navigation::msg::UwbData uwb_range_array;
 
-        //     for (int i=0; i<count; i++)
-        //     {
-        //         uwb_range_array.ranges.push_back(dist[idx[i]]);
-        //         uwb_range_array.anchor_ids.push_back(anc_id[idx[i]]);
+            for (int i=0; i<count; i++)
+            {
+                uwb_range_array.ranges.push_back(dist[idx[i]]);
+                uwb_range_array.anchor_ids.push_back(anc_id[idx[i]]);
 
-        //         geometry_msgs::msg::Pose anc_pose;
+                geometry_msgs::msg::Pose anc_pose;
 
-        //         anc_pose.position.x = anchor_positions_[anc_id[idx[i]]].x();
-        //         anc_pose.position.y = anchor_positions_[anc_id[idx[i]]].y();
-        //         anc_pose.position.z = anchor_positions_[anc_id[idx[i]]].z();
+                anc_pose.position.x = anchor_positions_[anc_id[idx[i]]].x();
+                anc_pose.position.y = anchor_positions_[anc_id[idx[i]]].y();
+                anc_pose.position.z = anchor_positions_[anc_id[idx[i]]].z();
 
-        //         uwb_range_array.pose.poses.push_back(anc_pose);                
-        //     }            
-        //     // uwb_range_publisher_->publish(uwb_range_array);
-        // }
+                uwb_range_array.pose.poses.push_back(anc_pose);                
+            }            
+            uwb_range_publisher_->publish(uwb_range_array);
+        }
     }
 
     void UWBLocalizer::setCurrentPose(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
@@ -233,20 +227,20 @@ namespace navigation
     {
         // 마커 현재 퍼블리시 안되고있습니다. [TBD]
         uwb_marker_publisher_->publish(anchor_marker_array);
-        uwb_text_publisher_->publish(text_marker_array);
+        // uwb_text_publisher_->publish(text_marker_array);
 
-        if (sim_sonar_)
-        {
-            sensor_msgs::msg::Range sonar_msg_;
-            sonar_msg_.header.frame_id = "map";
-            sonar_msg_.header.stamp = this->get_clock()->now();
+        // if (sim_sonar_)
+        // {
+        //     sensor_msgs::msg::Range sonar_msg_;
+        //     sonar_msg_.header.frame_id = "map";
+        //     sonar_msg_.header.stamp = this->get_clock()->now();
         
-            std::mt19937 rng{std::random_device{}()};
-            double ht = 0.96 + 0.1* std::normal_distribution<double>{0.0, 0.5}(rng); 
-            sonar_msg_.range = ht;
+        //     std::mt19937 rng{std::random_device{}()};
+        //     double ht = 0.96 + 0.1* std::normal_distribution<double>{0.0, 0.5}(rng); 
+        //     sonar_msg_.range = ht;
 
-            sonar_publisher_->publish(sonar_msg_);
-        }        
+        //     sonar_publisher_->publish(sonar_msg_);
+        // }        
     }
 
     void UWBLocalizer::setUwbMarker(uwbMeasurement uwb_info)
@@ -272,25 +266,5 @@ namespace navigation
         single_anchor_.color.g = 0.0; // Green
         single_anchor_.color.b = 0.0; // Blue        
         single_anchor_.lifetime = rclcpp::Duration(0, 0);
-
-        text_marker_.header.frame_id = "map";
-        text_marker_.header.stamp = this->now();
-        text_marker_.ns = "uwb_labels";
-        text_marker_.id = uwb_info.anchor_id; // Ensure unique ID for text marker
-        text_marker_.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-        text_marker_.action = visualization_msgs::msg::Marker::ADD;
-        text_marker_.text = "Anchor_" + std::to_string(uwb_info.anchor_id);
-
-        text_marker_.pose.position.x = uwb_info.anchor_position_x_;
-        text_marker_.pose.position.y = uwb_info.anchor_position_y_;
-        text_marker_.pose.position.z = uwb_info.anchor_position_z_ + 0.4; // 구 위에 표시
-        text_marker_.pose.orientation.w = 1.0;
-
-        text_marker_.scale.z = 1; // 텍스트 크기
-        text_marker_.color.r = 1.0;
-        text_marker_.color.g = 1.0;
-        text_marker_.color.b = 1.0;
-        text_marker_.color.a = 1.0;        
-        text_marker_.lifetime = rclcpp::Duration(0, 0);
     }
 }  // namespace navigation

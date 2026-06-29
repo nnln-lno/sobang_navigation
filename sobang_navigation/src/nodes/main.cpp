@@ -9,7 +9,7 @@ int main(int argc, char * argv[])
   auto nav_node = std::make_shared<navigation::Navigation>();
   auto uwb_node = std::make_shared<navigation::UWBLocalizer>();
 
-  rclcpp::executors::MultiThreadedExecutor executor;
+  rclcpp::executors::StaticSingleThreadedExecutor executor;
 
   executor.add_node(nav_node);
   executor.add_node(uwb_node);

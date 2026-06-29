@@ -35,6 +35,7 @@ sobang_navigation_node:
     sonar_cov : 0.1
     # Other settings
     view_state : false
+    view_path : true
 
 uwb_localizer_node:
   ros__parameters:

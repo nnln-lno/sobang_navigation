@@ -224,7 +224,7 @@ namespace navigation
             Vec2d translation_update = d_pose.head(2);
             double rotation_update = d_pose(2);
 
-            R_est = (skew33(Vec3d{0.0, 0.0, rotation_update})).exp() * R_est; 
+            R_est = R_est * (skew33(Vec3d{0.0, 0.0, rotation_update})).exp(); 
             t_est = t_est + Vec3d{d_pose(0), d_pose(1), 0.0};
 
             if ( i > 0 )

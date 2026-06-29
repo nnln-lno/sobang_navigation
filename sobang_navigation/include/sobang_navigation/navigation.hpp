@@ -94,7 +94,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
 
   // Publisher - Publish pointcloud w.r.t world frame to Rviz2 [TBD]
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_radar_publisher_;
+  // rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_radar_publisher_;
 
   void param_setting();
   
@@ -157,6 +157,7 @@ private:
   bool do_align_ = true; // Flag to determine whether to perform initial alignment using IMU data
   bool ned_ = false;
   bool view_state_ = false;
+  bool view_path_ = false;
 
   nav_msgs::msg::Path localPath;
   geometry_msgs::msg::PoseStamped pose;

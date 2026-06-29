@@ -9,7 +9,7 @@ namespace navigation
 {
   Navigation::Navigation() : Node("sobang_navigation_node"), count_(0)
   {
-    state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/nav/localState", 10);
+    param_setting();
 
     this->get_parameter("imu_topic", imu_topic_);
     this->get_parameter("radar_topic", radar_topic_);
@@ -17,14 +17,18 @@ namespace navigation
 
     auto sensor_qos = rclcpp::SensorDataQoS();    
 
-    // This for my pc or project alorithm based topic name
+    // 항법해를 출력하기 위한 Publisher 생성
+    state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/nav/localState", 10);
+
+    // 레이더 센서 데이터 취득을 위한 Subscriber 생성
     radar_subscriber_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
       radar_topic_, sensor_qos, std::bind(&Navigation::radar_callback, this, _1));
 
-    // This for Vectornav IMU Case
+    // IMU 센서 데이터 취득을 위한 Subscriber 생성
     imu_subscriber_ = this->create_subscription<sensor_msgs::msg::Imu>(
       imu_topic_, sensor_qos, std::bind(&Navigation::imu_callback, this, _1));
     
+    // UWB 거리 정보로 부터 계산되는 위치 정보를 취득하기 위한 Subscriber 생성
     uwb_position_subscriber_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
       "/uwb/position", 100, std::bind(&Navigation::uwbPositionCallback, this, _1));
       
@@ -33,14 +37,15 @@ namespace navigation
 
     sonar_subscriber_ = this->create_subscription<sensor_msgs::msg::Range>(
       sonar_topic_, 10, std::bind(&Navigation::sonarCallback, this, _1));
+    
+    if (view_path_)
+    {
+      std::cout << "We Create Path Publisher" << std::endl;
+      // No need to make path in experiment, because of it accumulate all navigation solution data.
+      path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/nav/localPath", 10);
+    }
 
-    // TODO: CREATE SONAR BAROMETER SUBSCRIBER
-
-    path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/nav/localPath", 10);
-
-    global_radar_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/nav/globalRadarPCL", 10);
-
-    param_setting();
+    // global_radar_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/nav/globalRadarPCL", 10);    
 
     setState(init_pos_, init_att_, init_gyro_bias_, Vec3d{1.0, 1.0, 1.0}); // for DR alignment
 
@@ -66,7 +71,6 @@ namespace navigation
     }
 
      // Update current state with the latest IMU data for ICP processing
-
     current_state.position = getState().position;
     current_state.quaternion = getState().quaternion;
 
@@ -76,7 +80,6 @@ namespace navigation
     {
       radar_estimator_.egoVelocityEstimator();                  
       stop_check = false;
-      // std::cout << "vel norm : " << radar_estimator_.getEgoVelocity().norm() << std::endl;
       if (radar_estimator_.getEgoVelocity().norm() < 0.01) // [HYPERPARAM] threshold for zero velocity after initial alignment
       {
           radar_estimator_.setEgoVelocity(Vec3d{0.0, 0.0, 0.0});          
@@ -116,7 +119,7 @@ namespace navigation
         Full_Hk <<     A.transpose(),     -A.transpose(), MatXd::Zero(3, 6),
                    Mat3d::Zero(3, 3), Jr * B.transpose(), MatXd::Zero(3, 6);
 
-        Vec6d R_icp_vec = Vec6d{2.0, 2.0, 2.0, 5.0 * d2r, 5.0 * d2r, 3.0 * d2r};
+        Vec6d R_icp_vec = Vec6d{2.0, 2.0, 2.0, 1e3* d2r, 1e3 * d2r, 3.0 * d2r};
         Mat6d R_icp = (R_icp_vec.cwiseProduct(R_icp_vec)).asDiagonal();
         measurementUpdate(getState(), Vec6d{z_t(0), z_t(1), z_t(2), z_att(0), z_att(1), z_att(2)}, Full_Hk, R_icp); // Only consider x, y translation and yaw rotation for 2D ICP
       }
@@ -128,7 +131,7 @@ namespace navigation
     // Radar and IMU has same coordinate system, so rotation is eye(3) and translation is zero.
     MatXd global_points = quat2dcm(getState().quaternion) * radar_estimator_.getPointMatrix() + getState().position.replicate(1, radar_estimator_.getPointMatrix().cols());
     
-    publish_radar_pointcloud(global_points);
+    // publish_radar_pointcloud(global_points);
 
     setRadarTimeDelta();              
 
@@ -174,13 +177,6 @@ namespace navigation
     publishDronePath(getState().position, getState().quaternion);
 
     setImuPreviousTime(getImuCurrentTime());
-
-    // for debugging - print received IMU data. Remove this after testing.
-    // RCLCPP_INFO(this->get_logger(), "Received IMU Measurement: Angular Velocity [%.5f, %.5f, %.5f] rad/s, Linear Acceleration [%.5f, %.5f, %.5f] m/s^2", 
-    //             msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z,
-    //             msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
-
-    // Logic to compute odometry from IMU data would go here
   }
 
   void Navigation::uwbPositionCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg)
@@ -235,7 +231,7 @@ namespace navigation
     if (!init_alignment_ && !stop_check)
     {
       // RCLCPP_INFO(this->get_logger(), "Received Sonar Range Measurement: %.2f m", sonar_range);
-      measurementUpdate(getState(), Vec1d{ residual }, Hk, R_sonar * R_sonar ); // [HYPERPARAM] Sonar measurement noise covariance
+      measurementUpdate(getState(), Vec1d{ residual }, Hk, R_sonar); // [HYPERPARAM] Sonar measurement noise covariance
     }
   }
 
@@ -435,9 +431,6 @@ namespace navigation
 
   void Navigation::publishDronePath(Vec3d position, Vec4d quaternion)
   {
-    localPath.header.frame_id = "map";
-    localPath.header.stamp = this->get_clock()->now();
-
     pose.header.frame_id = "map";
     pose.header.stamp = this->get_clock()->now();
 
@@ -467,11 +460,15 @@ namespace navigation
     pose.pose.orientation.w = quaternion(0);
     }
 
-    localPath.poses.push_back(pose);    
-    path_publisher_->publish(localPath);
-
+    if (view_path_)
+    {
+      localPath.header.frame_id = "map";
+      localPath.header.stamp = this->get_clock()->now();
+      localPath.poses.push_back(pose);
+      path_publisher_->publish(localPath);
+    }
     state_publisher_->publish(pose);
-  }
+  }  
 
   drState Navigation::getState() { return drone_state_;}
 
@@ -560,17 +557,11 @@ namespace navigation
   {
     drState printState = getState();
 
-    std::cout << "-------------------- NAVIGATION STATE SUMMARY --------------------" << std::endl;
-    std::cout << "Sensor Rate : " << imu_rate << " Hz, " << "Radar Rate : " << radar_rate << " Hz" << std::endl;
-    std::cout << "IMU Coordinate : " << (ned_ ? "Forward-Right-Down" : "Forward-Left-Up") << std::endl;
-    std::cout << std::endl;
-    std::cout << "Initial Position: [" << printState.position.transpose() << "]" << std::endl;
-    std::cout << "Initial Attitude (deg): ["  << quat2euler(printState.quaternion).transpose() * r2d << "]" << std::endl; 
-    std::cout << "Initial Gyro Bias: [" << printState.gyro_bias.transpose() << "]" << std::endl;
-    std::cout << "Initial Scale Factor : [" << printState.scale.transpose() << "]" << std::endl;
+    std::cout << "-------------------- Navigation Node is Running ... --------------------" << std::endl;
     std::cout << std::endl;
     std::cout << "[INFO] CHECK DRONE STATE BY SUBSCRIBING '/nav/localState' TOPIC !" << std::endl; 
-    std::cout << "------------------------------------------------------------------" << std::endl;
+    std::cout << std::endl;
+    std::cout << "------------------------------------------------------------------------" << std::endl;
   }
 
   void Navigation::param_setting()
@@ -579,7 +570,7 @@ namespace navigation
     this->declare_parameter("radar_rate", 20);
     this->declare_parameter("init_pos", std::vector<double>{0.0, 0.0, 0.0});
     this->declare_parameter("init_att", std::vector<double>{0.0, 0.0, 0.0});
-    this->declare_parameter("init_gyro_bias", std::vector<double>{0.0, 0.0, 0.0});    
+    this->declare_parameter("init_gyro_bias", std::vector<double>{0.0, 0.0, 0.0});
     
     this->get_parameter("imu_rate", imu_rate);
     this->get_parameter("radar_rate", radar_rate);
@@ -656,6 +647,10 @@ namespace navigation
     Vec3d R_uwb_vec = Vec3d{uwb_cov_vec[0], uwb_cov_vec[1], uwb_cov_vec[2]};
     R_uwb = (R_uwb_vec.cwiseProduct(R_uwb_vec)).asDiagonal();// This function can be used to set parameters dynamically if needed  }
 
+    this->declare_parameter("sonar_cov", 0.1);
+    double sonar_cov = this->get_parameter("sonar_cov").as_double();
+    R_sonar = Mat1d::Identity() * sonar_cov * sonar_cov;
+
     this->declare_parameter("imu_t_radar", std::vector<double>{0.0, 0.0, 0.0});
     this->declare_parameter("imu_R_radar", std::vector<double>{0.0, 0.0, 0.0});
 
@@ -664,5 +659,10 @@ namespace navigation
         
     Cbr = euler2dcm(Vec3d({imu_R_radar_[0] * d2r, imu_R_radar_[1] * d2r, imu_R_radar_[2] * d2r  }));
     tbr = Vec3d({imu_t_radar_[0], imu_t_radar_[1], imu_t_radar_[2]});
+    
+    this->declare_parameter("view_path", false);
+    this->get_parameter("view_path", view_path_);
   }
+
+
 }  // namespace navigation
