@@ -16,6 +16,7 @@ sobang_navigation_node:
     # Sonar Setting
     sonar_topic : "/sonar/range"
     sonar_rate : 10
+    imu_t_sonar : [0.0, 0.0, -0.06]
     # Prior Information (Basically Forward-Left-Up coordinate system)
     init_pos : [0.0, 0.0, 0.96]
     init_att : [0.0, 0.0, 0.0]
@@ -32,10 +33,11 @@ sobang_navigation_node:
     radar_scale_noise : [0.0001, 0.0001, 0.0001]
     # Measurement Covariance
     uwb_cov : [5.5, 5.5, 4.5]
+    uwb_range_cov : 5.5
     sonar_cov : 0.1
     # Other settings
     view_state : false
-    view_path : false
+    view_path : true
 
 uwb_localizer_node:
   ros__parameters:

@@ -35,6 +35,7 @@ public:
 
   Mat3d Cbr = Mat3d::Identity(); // Rotation from radar frame to body frame
   Vec3d tbr = Vec3d::Zero(); // Translation from radar frame to
+  Vec3d tis = Vec3d::Zero(); // Translation from sonar frame to body frame
 
   Vec3d init_pos_ = Vec3d::Zero();
   Vec4d init_att_ = Vec4d::Zero();
@@ -48,6 +49,7 @@ public:
   Mat12d Qk = Mat12d::Zero();
 
   Mat3d R_uwb = Mat3d::Identity() * 5.5; // Measurement noise covariance for UWB
+  double R_uwb_range = 5.5; // Measurement noise covariance for UWB range
   Mat1d R_sonar = Mat1d::Identity() * 0.1; // Measurement noise covariance for Sonar
 
   uint16_t imu_rate = 200; // [HYPERPARAM] IMU data rate in Hz. Change this according to your IMU's actual data rate.

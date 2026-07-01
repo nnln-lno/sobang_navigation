@@ -40,7 +40,6 @@ namespace navigation
     
     if (view_path_)
     {
-      std::cout << "We Create Path Publisher" << std::endl;
       // No need to make path in experiment, because of it accumulate all navigation solution data.
       path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/nav/localPath", 10);
     }
@@ -138,8 +137,22 @@ namespace navigation
     setRadarPreviousTime(getRadarCurrentTime());              
   }
 
-  void Navigation::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
-  {               
+  void Navigation::imu_callback(const sensor_msgs::msg::Imu::SharedPtr i_msg)
+  { 
+    sensor_msgs::msg::Imu::SharedPtr msg = std::make_shared<sensor_msgs::msg::Imu>(*i_msg);
+
+    if (imu_topic_ == "/imu_apps")
+    {
+      msg->header.stamp.sec = i_msg->header.stamp.sec;
+      msg->header.stamp.nanosec = i_msg->header.stamp.nanosec;
+      msg->linear_acceleration.x = -i_msg->linear_acceleration.x;
+      msg->linear_acceleration.y = -i_msg->linear_acceleration.y;
+      msg->linear_acceleration.z = i_msg->linear_acceleration.z;
+      msg->angular_velocity.x = -i_msg->angular_velocity.x;
+      msg->angular_velocity.y = -i_msg->angular_velocity.y;
+      msg->angular_velocity.z = i_msg->angular_velocity.z;
+    }
+
     setImuCurrentTime(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);    
 
     imu_cnt++;
@@ -214,14 +227,14 @@ namespace navigation
       Hk.row(i).block<1, 3>(0, 0) = -(anc_pos - getState().position).transpose() / (anc_pos - getState().position).norm();
     } 
 
-    measurementUpdate(getState(), residual, Hk, (5.5)*(5.5)*MatXd::Identity(count, count)); // [HYPERPARAM] UWB range measurement noise covariance
+    measurementUpdate(getState(), residual, Hk, R_uwb_range*MatXd::Identity(count, count)); // [HYPERPARAM] UWB range measurement noise covariance
   }
 
   void Navigation::sonarCallback(const sensor_msgs::msg::Range::SharedPtr msg)
   {
     double sonar_range = msg->range;
 
-    double residual = sonar_range - getState().position.z(); // Assuming sonar measures height
+    double residual = (sonar_range - tis.z()) - (getState().position.z()); // Assuming sonar measures height
 
     // std::cout << "Sonar Range: " << sonar_range << ", Estimated Height: " << getState().position.z() << ", Residual: " << residual << std::endl;
 
@@ -647,18 +660,26 @@ namespace navigation
     Vec3d R_uwb_vec = Vec3d{uwb_cov_vec[0], uwb_cov_vec[1], uwb_cov_vec[2]};
     R_uwb = (R_uwb_vec.cwiseProduct(R_uwb_vec)).asDiagonal();// This function can be used to set parameters dynamically if needed  }
 
+    this->declare_parameter("uwb_range_cov", 5.5);
+    double uwb_range_cov = this->get_parameter("uwb_range_cov").as_double();
+    R_uwb_range = uwb_range_cov * uwb_range_cov;
+
     this->declare_parameter("sonar_cov", 0.1);
     double sonar_cov = this->get_parameter("sonar_cov").as_double();
     R_sonar = Mat1d::Identity() * sonar_cov * sonar_cov;
 
     this->declare_parameter("imu_t_radar", std::vector<double>{0.0, 0.0, 0.0});
     this->declare_parameter("imu_R_radar", std::vector<double>{0.0, 0.0, 0.0});
+    this->declare_parameter("imu_t_sonar", std::vector<double>{0.0, 0.0, 0.0});
 
     std::vector<double> imu_t_radar_ = this->get_parameter("imu_t_radar").as_double_array();
     std::vector<double> imu_R_radar_ = this->get_parameter("imu_R_radar").as_double_array();
+    std::vector<double> imu_t_sonar_ = this->get_parameter("imu_t_sonar").as_double_array();
         
     Cbr = euler2dcm(Vec3d({imu_R_radar_[0] * d2r, imu_R_radar_[1] * d2r, imu_R_radar_[2] * d2r  }));
     tbr = Vec3d({imu_t_radar_[0], imu_t_radar_[1], imu_t_radar_[2]});
+
+    tis = Vec3d({imu_t_sonar_[0], imu_t_sonar_[1], imu_t_sonar_[2]});
     
     this->declare_parameter("view_path", false);
     this->get_parameter("view_path", view_path_);

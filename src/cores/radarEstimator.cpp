@@ -88,7 +88,7 @@ namespace navigation
 
         std::vector<uint> inlier_indices_;
 
-        for (int iter = 0; iter < 150; ++iter) // Example: Shuffle 100 times RANSAC iterations
+        for (int iter = 0; iter < 200; ++iter) // Example: Shuffle 100 times RANSAC iterations
         {
             // Shuffle and only take 3 front index data
             std::shuffle(valid_indices.begin(), valid_indices.end(), g);
@@ -151,7 +151,7 @@ namespace navigation
         icp_pose.position = t;
         icp_pose.quaternion = dcm2quat(R);
 
-        uint iter = 100;
+        uint iter = 200;
         double lamb = 0.5;        
         double delta = 0.1;
 
