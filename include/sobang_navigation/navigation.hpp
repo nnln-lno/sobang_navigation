@@ -33,9 +33,18 @@ public:
   Vec3d acc_accum{0.0, 0.0, 0.0};
   Vec3d gyro_accum{0.0, 0.0, 0.0};
 
-  Mat3d Cbr = Mat3d::Identity(); // Rotation from radar frame to body frame
-  Vec3d tbr = Vec3d::Zero(); // Translation from radar frame to
+  Mat3d Cgb = Mat3d::Identity(); // Rotation from body frame to ref frame
+  Vec3d tgb = Vec3d::Zero(); // Translation from body frame to ref frame
+
+  Mat3d Cbi = Mat3d::Identity(); // Rotation from imu frame to body frame
+  Vec3d tbi = Vec3d::Zero(); // Translation from imu frame to body frame
+
+  Mat3d Cir = Mat3d::Identity(); // Rotation from radar frame to body frame
+  Vec3d tir = Vec3d::Zero(); // Translation from radar frame to
+
   Vec3d tis = Vec3d::Zero(); // Translation from sonar frame to body frame
+  
+  Vec3d tiu = Vec3d::Zero(); // Translation from uwb tag to imu frame
 
   Vec3d init_pos_ = Vec3d::Zero();
   Vec4d init_att_ = Vec4d::Zero();
@@ -59,7 +68,7 @@ public:
   double imu_current_time_ = 0.0;
   double imu_time_delta_ = 0.0;
 
-  double radar_previous_time_ = 0.0; // For calculating time delta in state estimation
+  double radar_previous_time_ = 0.0; // For calculating time delta in state estimation double radar_current_time_ = 0.0; 
   double radar_current_time_ = 0.0;
   double radar_time_delta_ = 0.0;
 
@@ -69,6 +78,8 @@ public:
   double align_time_ = 10.0; // Time duration for initial alignment using IMU data
 
   uint icp_cnt = 0;
+
+  uint ref_frame_ = 0;
 
 private:
   // Publisher - Publish Local State
