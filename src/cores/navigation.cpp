@@ -1,6 +1,7 @@
 #include "sobang_navigation/navigation.hpp"
 #include <functional>
 #include <random>
+#include <limits>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -15,6 +16,8 @@ namespace navigation
 
     // 항법해를 출력하기 위한 Publisher 생성
     state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/nav/localState", 10);
+
+    px4_state_publisher_ = this->create_publisher<px4_msgs::msg::VehicleOdometry>("/fmu/in/vehicle_visual_odometry", 10);
 
     // 레이더 센서 데이터 취득을 위한 Subscriber 생성
     radar_subscriber_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -137,32 +140,6 @@ namespace navigation
   { 
     sensor_msgs::msg::Imu::SharedPtr msg = std::make_shared<sensor_msgs::msg::Imu>(*i_msg);
 
-    if (imu_topic_ == "/imu_apps")
-    {
-      if (ref_frame_ == 0)
-      {
-        msg->header.stamp.sec = i_msg->header.stamp.sec;
-        msg->header.stamp.nanosec = i_msg->header.stamp.nanosec;
-        msg->linear_acceleration.x = -i_msg->linear_acceleration.x;
-        msg->linear_acceleration.y = -i_msg->linear_acceleration.y;
-        msg->linear_acceleration.z = i_msg->linear_acceleration.z;
-        msg->angular_velocity.x = -i_msg->angular_velocity.x;
-        msg->angular_velocity.y = -i_msg->angular_velocity.y;
-        msg->angular_velocity.z = i_msg->angular_velocity.z;
-      }
-      else if(ref_frame_ == 1)
-      {
-        msg->header.stamp.sec = i_msg->header.stamp.sec;
-        msg->header.stamp.nanosec = i_msg->header.stamp.nanosec;
-        msg->linear_acceleration.x = -i_msg->linear_acceleration.x;
-        msg->linear_acceleration.y = i_msg->linear_acceleration.y;
-        msg->linear_acceleration.z = -i_msg->linear_acceleration.z;
-        msg->angular_velocity.x = -i_msg->angular_velocity.x;
-        msg->angular_velocity.y = i_msg->angular_velocity.y;
-        msg->angular_velocity.z = -i_msg->angular_velocity.z;
-      }
-    }
-
     setImuCurrentTime(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);    
 
     imu_cnt++;
@@ -189,6 +166,8 @@ namespace navigation
     setImuTimeDelta();    
 
     Vec3d w_b = Vec3d{msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z} - getState().gyro_bias;
+
+    omega = w_b;
 
     DeadReckoning(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
 
@@ -438,6 +417,42 @@ namespace navigation
     else if (count_ % 10 == 0 && imu_cnt > 0 && init_alignment_) // Print stop status every 10 timer callbacks (5 seconds) when drone is stationary
     {
       RCLCPP_INFO(this->get_logger(), "Waiting for Alignment process ..."); 
+    }
+
+    if ( !init_alignment_ )
+    { 
+      px4_pose.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+      px4_pose.timestamp_sample = px4_pose.timestamp;
+      px4_pose.pose_frame = px4_msgs::msg::VehicleOdometry::POSE_FRAME_FRD;
+  
+      Vec3d px4_cur_pos = getState().position;
+      Vec3d px4_cur_att = quat2euler(getState().quaternion);    
+
+      if (ref_frame_ == 0 )
+      {
+        px4_pose.position = { (float)px4_cur_pos(0), -(float)px4_cur_pos(1), -(float)px4_cur_pos(2) };
+        
+        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), -px4_cur_att(1), -px4_cur_att(2)) );
+        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
+      }
+      else if(ref_frame_ == 1 )
+      {
+        px4_pose.position = { (float)px4_cur_pos(0), (float)px4_cur_pos(1), (float)px4_cur_pos(2) };
+      
+        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), px4_cur_att(1), px4_cur_att(2))  );
+        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
+      }
+
+      px4_pose.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_FRD;
+      px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+
+      px4_pose.angular_velocity =  { (float)omega(0), (float)omega(1), (float)omega(2) };
+      
+      px4_pose.position_variance = {0.01, 0.01, 0.01};
+      px4_pose.velocity_variance = {0.01, 0.01, 0.01};
+      px4_pose.orientation_variance = {0.0001, 0.0001, 0.0001};
+
+      px4_state_publisher_->publish(px4_pose);
     }
   }
 

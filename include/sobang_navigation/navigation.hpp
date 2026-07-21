@@ -11,6 +11,8 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 
+#include "px4_msgs/msg/vehicle_odometry.hpp"
+
 #include "sobang_navigation/msg/local_state.hpp"
 #include "sobang_navigation/msg/uwb_data.hpp"
 
@@ -48,6 +50,8 @@ public:
 
   Mat3d Cbr = Mat3d::Identity();
   Vec3d tbr, tbu = Vec3d::Zero();
+
+  Vec3d omega = Vec3d::Zero();
 
   Vec3d init_pos_ = Vec3d::Zero();
   Vec4d init_att_ = Vec4d::Zero();
@@ -87,6 +91,8 @@ public:
 private:
   // Publisher - Publish Local State
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr state_publisher_;
+
+  rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_state_publisher_;
 
   // Subscriber - Subscribe UWB Range Infornmation or other [TBD]
   // rclcpp::Subscription<uwb_driver::msg::UwbRange>::SharedPtr uwb_subscriber_;
@@ -177,6 +183,7 @@ private:
 
   nav_msgs::msg::Path localPath;
   geometry_msgs::msg::PoseStamped pose;
+  px4_msgs::msg::VehicleOdometry px4_pose{};
 
   std::string imu_topic_ = "/vectornav/imu";
   std::string radar_topic_ = "/mmwave/radarScan";

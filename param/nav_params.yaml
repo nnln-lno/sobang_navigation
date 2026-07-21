@@ -12,20 +12,21 @@
     ### Extrinsic Param (Rotation unit is degree :) )
     # imu to body transformation
     body_t_imu : [0.0, 0.0, 0.0]
-    body_R_imu : [0.0, 0.0, 0.0]
+    body_R_imu : [180.0, 0.0, 0.0]
     # radar to imu transformation
-    imu_t_radar : [0.0, 0.0, 0.0]
-    imu_R_radar : [0.0, 0.0, 0.0]
+    imu_t_radar : [-0.1, 0.0, 0.07]
+    imu_R_radar : [180.0, 0.0, 0.0]
     # uwb tag to imu translation
-    imu_t_uwb : [0.0, 0.0, 0.0]
+    imu_t_uwb : [-0.06, 0.0, -0.065]
     # snoar to imu translation
-    imu_t_sonar : [0.0, 0.0, -0.06]
+    imu_t_sonar : [0.0, -0.05, -0.04]
+    
     
 sobang_navigation_node:
     # Reference coordinate system : Forward-Left-Up
   ros__parameters:  
     ### IMU Setting 
-    imu_topic : "/vectornav/imu"
+    imu_topic : "/imu_apps"
     imu_rate: 200
     do_align : false
     align_time : 10.0
@@ -39,7 +40,7 @@ sobang_navigation_node:
     # Prior Information (with respect to  Reference Frame)
     init_pos : [0.0, 0.0, 0.96]
     init_att : [0.0, 0.0, 0.0]
-    init_gyro_bias : [0.0008, -0.0016, 0.0003]
+    init_gyro_bias : [0.0098788, -0.00823005, -0.00635545]
     
     # Standard Deviations of initial state covariance param
     init_pos_cov : [0.8, 0.8, 0.8]    
@@ -60,7 +61,7 @@ sobang_navigation_node:
 
     # Other settings
     view_state : false
-    view_path : true
+    view_path : false
 
 uwb_localizer_node:
   ros__parameters:

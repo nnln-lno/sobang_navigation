@@ -27,11 +27,11 @@ def generate_launch_description():
             output='screen',            
             parameters=[LaunchConfiguration('nav_param_file')]
         ),
-        Node(
-            package='rviz2',
-            executable='rviz2',
-            name='rviz2',
-            output='screen',
-            arguments=['-d', rviz_dir]
-        )
+        # Node(
+        #    package='rviz2',
+        #    executable='rviz2',
+        #    name='rviz2',
+        #    output='screen',
+        #    arguments=['-d', rviz_dir]
+        # )
     ])
