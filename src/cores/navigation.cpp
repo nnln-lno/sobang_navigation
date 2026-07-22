@@ -309,7 +309,7 @@ namespace navigation
 
     Mat3d w_skew = skew33(angular_rate);
 
-    Vec3d new_position       = prev_state.position + Cgb*Cbi*(Cir*ego_velocity - Cbi*w_skew*tir)*dt;
+    Vec3d new_position       = prev_state.position + Cgb*Cbi*(Cir*ego_velocity - w_skew*tir)*dt;
     
     // Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, angular_rate, dt); 
     Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, Cbi*angular_rate, dt);
