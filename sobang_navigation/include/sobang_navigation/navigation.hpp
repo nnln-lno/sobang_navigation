@@ -11,6 +11,8 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 
+#include "px4_msgs/msg/vehicle_odometry.hpp"
+
 #include "sobang_navigation/msg/local_state.hpp"
 #include "sobang_navigation/msg/uwb_data.hpp"
 
@@ -33,9 +35,23 @@ public:
   Vec3d acc_accum{0.0, 0.0, 0.0};
   Vec3d gyro_accum{0.0, 0.0, 0.0};
 
-  Mat3d Cbr = Mat3d::Identity(); // Rotation from radar frame to body frame
-  Vec3d tbr = Vec3d::Zero(); // Translation from radar frame to
+  Mat3d Cgb = Mat3d::Identity(); // Rotation from body frame to ref frame
+  Vec3d tgb = Vec3d::Zero(); // Translation from body frame to ref frame
+
+  Mat3d Cbi = Mat3d::Identity(); // Rotation from imu frame to body frame
+  Vec3d tbi = Vec3d::Zero(); // Translation from imu frame to body frame
+
+  Mat3d Cir = Mat3d::Identity(); // Rotation from radar frame to body frame
+  Vec3d tir = Vec3d::Zero(); // Translation from radar frame to
+
   Vec3d tis = Vec3d::Zero(); // Translation from sonar frame to body frame
+  
+  Vec3d tiu = Vec3d::Zero(); // Translation from uwb tag to imu frame
+
+  Mat3d Cbr = Mat3d::Identity();
+  Vec3d tbr, tbu = Vec3d::Zero();
+
+  Vec3d omega = Vec3d::Zero();
 
   Vec3d init_pos_ = Vec3d::Zero();
   Vec4d init_att_ = Vec4d::Zero();
@@ -59,7 +75,7 @@ public:
   double imu_current_time_ = 0.0;
   double imu_time_delta_ = 0.0;
 
-  double radar_previous_time_ = 0.0; // For calculating time delta in state estimation
+  double radar_previous_time_ = 0.0; // For calculating time delta in state estimation double radar_current_time_ = 0.0; 
   double radar_current_time_ = 0.0;
   double radar_time_delta_ = 0.0;
 
@@ -70,9 +86,13 @@ public:
 
   uint icp_cnt = 0;
 
+  uint ref_frame_ = 0;
+
 private:
   // Publisher - Publish Local State
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr state_publisher_;
+
+  rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_state_publisher_;
 
   // Subscriber - Subscribe UWB Range Infornmation or other [TBD]
   // rclcpp::Subscription<uwb_driver::msg::UwbRange>::SharedPtr uwb_subscriber_;
@@ -160,9 +180,12 @@ private:
   bool ned_ = false;
   bool view_state_ = false;
   bool view_path_ = false;
+  
+  int px4_fc_rate_ = 10;
 
   nav_msgs::msg::Path localPath;
   geometry_msgs::msg::PoseStamped pose;
+  px4_msgs::msg::VehicleOdometry px4_pose{};
 
   std::string imu_topic_ = "/vectornav/imu";
   std::string radar_topic_ = "/mmwave/radarScan";
@@ -182,7 +205,9 @@ private:
 
   // Timer for publishing
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr px4_timer_;
   void timer_callback();
+  void px4_timer_callback();
   int count_;
 };
 
