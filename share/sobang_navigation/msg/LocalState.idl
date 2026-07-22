@@ -1,0 +1,16 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from sobang_navigation/msg/LocalState.msg
+// generated code does not contain a copyright notice
+
+#include "geometry_msgs/msg/Pose.idl"
+#include "std_msgs/msg/Header.idl"
+
+module sobang_navigation {
+  module msg {
+    struct LocalState {
+      std_msgs::msg::Header header;
+
+      geometry_msgs::msg::Pose pose;
+    };
+  };
+};

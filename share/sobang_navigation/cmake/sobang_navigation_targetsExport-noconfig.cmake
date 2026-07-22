@@ -1,0 +1,19 @@
+#----------------------------------------------------------------
+# Generated CMake target import file.
+#----------------------------------------------------------------
+
+# Commands may need to know the format version.
+set(CMAKE_IMPORT_FILE_VERSION 1)
+
+# Import target "sobang_navigation::sobang_navigation_lib" for configuration ""
+set_property(TARGET sobang_navigation::sobang_navigation_lib APPEND PROPERTY IMPORTED_CONFIGURATIONS NOCONFIG)
+set_target_properties(sobang_navigation::sobang_navigation_lib PROPERTIES
+  IMPORTED_LOCATION_NOCONFIG "${_IMPORT_PREFIX}/lib/libsobang_navigation_lib.so"
+  IMPORTED_SONAME_NOCONFIG "libsobang_navigation_lib.so"
+  )
+
+list(APPEND _IMPORT_CHECK_TARGETS sobang_navigation::sobang_navigation_lib )
+list(APPEND _IMPORT_CHECK_FILES_FOR_sobang_navigation::sobang_navigation_lib "${_IMPORT_PREFIX}/lib/libsobang_navigation_lib.so" )
+
+# Commands beyond this point should not need to know the version.
+set(CMAKE_IMPORT_FILE_VERSION)

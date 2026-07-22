@@ -1,0 +1,20 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from sobang_navigation/msg/UwbData.msg
+// generated code does not contain a copyright notice
+
+#include "geometry_msgs/msg/PoseArray.idl"
+#include "std_msgs/msg/Header.idl"
+
+module sobang_navigation {
+  module msg {
+    struct UwbData {
+      std_msgs::msg::Header header;
+
+      sequence<int16> anchor_ids;
+
+      sequence<float> ranges;
+
+      geometry_msgs::msg::PoseArray pose;
+    };
+  };
+};
