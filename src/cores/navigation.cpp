@@ -1,6 +1,7 @@
 #include "sobang_navigation/navigation.hpp"
 #include <functional>
 #include <random>
+#include <limits>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -11,14 +12,12 @@ namespace navigation
   {
     param_setting();
 
-    this->get_parameter("imu_topic", imu_topic_);
-    this->get_parameter("radar_topic", radar_topic_);
-    this->get_parameter("sonar_topic", sonar_topic_);
-
-    auto sensor_qos = rclcpp::SensorDataQoS();    
+    auto sensor_qos = rclcpp::SensorDataQoS();   
 
     // 항법해를 출력하기 위한 Publisher 생성
     state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/nav/localState", 10);
+
+    px4_state_publisher_ = this->create_publisher<px4_msgs::msg::VehicleOdometry>("/fmu/in/vehicle_visual_odometry", 10);
 
     // 레이더 센서 데이터 취득을 위한 Subscriber 생성
     radar_subscriber_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -44,12 +43,13 @@ namespace navigation
       path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/nav/localPath", 10);
     }
 
-    // global_radar_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/nav/globalRadarPCL", 10);    
-
     setState(init_pos_, init_att_, init_gyro_bias_, Vec3d{1.0, 1.0, 1.0}); // for DR alignment
 
     timer_ = this->create_wall_timer(
       500ms, std::bind(&Navigation::timer_callback, this));
+
+    px4_timer_ = this->create_wall_timer(
+      std::chrono::duration<double>(1.0 / px4_fc_rate_), std::bind(&Navigation::px4_timer_callback, this));
   }
 
   // Measurement Callback
@@ -57,14 +57,14 @@ namespace navigation
   void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
     radar_estimator_.radarParser(msg); // Here, parsing point cloud data.
-
+    
     if (icp_cnt == 0)
     {
       radar_estimator_.setPreviousPoints(radar_estimator_.getPointMatrix());
       prev_cnt = imu_cnt;
       icp_cnt++;
     }
-    else if (icp_cnt == 1)
+      else if (icp_cnt == 1)
     {
       radar_estimator_.setCurrentPoints(radar_estimator_.getPointMatrix());            
     }
@@ -90,8 +90,10 @@ namespace navigation
       return;
     }
 
-    Mat3d rel_R = quat2dcm(prev_state.quaternion).transpose() * quat2dcm(current_state.quaternion);
-    Vec3d rel_t = quat2dcm(prev_state.quaternion).transpose() * (current_state.position - prev_state.position);    
+    // Mat3d rel_R = quat2dcm(prev_state.quaternion).transpose() * quat2dcm(current_state.quaternion);
+    Mat3d rel_R = ( quat2dcm(prev_state.quaternion) * Cbi * Cir ) .transpose() * ( quat2dcm(current_state.quaternion) * Cbi * Cir );
+    // Vec3d rel_t = quat2dcm(prev_state.quaternion).transpose() * (current_state.position - prev_state.position);
+    Vec3d rel_t = ( quat2dcm(prev_state.quaternion) * Cbi * Cir ).transpose() * ( (current_state.position + quat2dcm(current_state.quaternion) * tbr ) - (prev_state.position + quat2dcm(prev_state.quaternion) * tbr ) );
 
     if ( ( (std::abs(dcm2euler(rel_R)(2)) > (1.0 * d2r)) || ( std::abs(rel_t(0)) > 0.3) ) && (icp_cnt > 1) )
     {  
@@ -105,8 +107,10 @@ namespace navigation
         double th_ = acos( std::clamp( (z_R.trace() - 1.0) / 2.0, -1.0, 1.0) );
         Vec3d z_att = (th_)/(2.0 * sin(th_)) * Vec3d{z_R(2,1) - z_R(1,2), z_R(0,2) - z_R(2,0), z_R(1,0) - z_R(0,1)};
 
-        Mat3d A = quat2dcm(prev_state.quaternion);
-        Mat3d B = quat2dcm(current_state.quaternion);
+        // Mat3d A = quat2dcm(prev_state.quaternion);
+        Mat3d A = quat2dcm(prev_state.quaternion) * Cbi * Cir;
+        // Mat3d B = quat2dcm(current_state.quaternion);
+        Mat3d B = quat2dcm(current_state.quaternion) * Cbi * Cir;
         Mat3d ATB = A.transpose() * B;
 
         double ATB_th_ = acos( std::clamp( (ATB.trace() - 1.0) / 2.0, -1.0, 1.0 ) );
@@ -115,8 +119,8 @@ namespace navigation
         
         MatXd Full_Hk = MatXd::Zero(6, 12);
         
-        Full_Hk <<     A.transpose(),     -A.transpose(), MatXd::Zero(3, 6),
-                   Mat3d::Zero(3, 3), Jr * B.transpose(), MatXd::Zero(3, 6);
+        Full_Hk <<     A.transpose(),     -A.transpose() * skew33( quat2dcm(current_state.quaternion) * tbr ), MatXd::Zero(3, 6),
+                   Mat3d::Zero(3, 3),                                                      Jr * B.transpose(), MatXd::Zero(3, 6);
 
         Vec6d R_icp_vec = Vec6d{2.0, 2.0, 2.0, 1e3* d2r, 1e3 * d2r, 3.0 * d2r};
         Mat6d R_icp = (R_icp_vec.cwiseProduct(R_icp_vec)).asDiagonal();
@@ -129,8 +133,6 @@ namespace navigation
 
     // Radar and IMU has same coordinate system, so rotation is eye(3) and translation is zero.
     MatXd global_points = quat2dcm(getState().quaternion) * radar_estimator_.getPointMatrix() + getState().position.replicate(1, radar_estimator_.getPointMatrix().cols());
-    
-    // publish_radar_pointcloud(global_points);
 
     setRadarTimeDelta();              
 
@@ -140,18 +142,6 @@ namespace navigation
   void Navigation::imu_callback(const sensor_msgs::msg::Imu::SharedPtr i_msg)
   { 
     sensor_msgs::msg::Imu::SharedPtr msg = std::make_shared<sensor_msgs::msg::Imu>(*i_msg);
-
-    if (imu_topic_ == "/imu_apps")
-    {
-      msg->header.stamp.sec = i_msg->header.stamp.sec;
-      msg->header.stamp.nanosec = i_msg->header.stamp.nanosec;
-      msg->linear_acceleration.x = -i_msg->linear_acceleration.x;
-      msg->linear_acceleration.y = -i_msg->linear_acceleration.y;
-      msg->linear_acceleration.z = i_msg->linear_acceleration.z;
-      msg->angular_velocity.x = -i_msg->angular_velocity.x;
-      msg->angular_velocity.y = -i_msg->angular_velocity.y;
-      msg->angular_velocity.z = i_msg->angular_velocity.z;
-    }
 
     setImuCurrentTime(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);    
 
@@ -180,6 +170,8 @@ namespace navigation
 
     Vec3d w_b = Vec3d{msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z} - getState().gyro_bias;
 
+    omega = w_b;
+
     DeadReckoning(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
 
     timeUpdate(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
@@ -195,12 +187,13 @@ namespace navigation
   void Navigation::uwbPositionCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg)
   {    
     Vec3d uwb_position(msg->point.x, msg->point.y, msg->point.z); // Vec3d residual = uwb_position - getState().position;
-    
-    Vec3d residual = uwb_position - getState().position; // Assuming UWB measures height with some bias
+   
+    // Vec3d residual = uwb_position - getState().position
+    Vec3d residual = uwb_position - ( getState().position + quat2dcm(getState().quaternion) * ( Cbi * tiu + tbi ) ); // Assuming UWB measures height with some bias
 
     MatXd Hk = MatXd::Zero(3, 12);
     Hk.block<3, 3>(0, 0) = Mat3d::Identity();
-
+    Hk.block<3, 3>(0, 3) = - skew33( quat2dcm(getState().quaternion) * (Cbi * tiu + tbi) );
     if (!init_alignment_ && !stop_check)
     {
       // RCLCPP_INFO(this->get_logger(), "Received UWB Position Measurement: [%.2f, %.2f, %.2f]", msg->point.x, msg->point.y, msg->point.z);
@@ -221,10 +214,11 @@ namespace navigation
     MatXd Hk = MatXd::Zero(count, 12);
     for (int i=0; i<count; i++)
     {
+      Vec3d uwb_pos = getState().position + quat2dcm(getState().quaternion) * (tbi + Cbi * tiu);
       Vec3d anc_pos(anc_poses[i].position.x, anc_poses[i].position.y, anc_poses[i].position.z);
-      residual(i) = dist[i] - (anc_pos - getState().position).norm();
+      residual(i) = dist[i] - (anc_pos - uwb_pos).norm();
 
-      Hk.row(i).block<1, 3>(0, 0) = -(anc_pos - getState().position).transpose() / (anc_pos - getState().position).norm();
+      Hk.row(i).block<1, 3>(0, 0) = -(anc_pos - uwb_pos).transpose() / (anc_pos - uwb_pos).norm();
     } 
 
     measurementUpdate(getState(), residual, Hk, R_uwb_range*MatXd::Identity(count, count)); // [HYPERPARAM] UWB range measurement noise covariance
@@ -234,7 +228,7 @@ namespace navigation
   {
     double sonar_range = msg->range;
 
-    double residual = (sonar_range - tis.z()) - (getState().position.z()); // Assuming sonar measures height
+    double residual = (sonar_range) - (getState().position.z() - tis.z()); // Assuming sonar measures height
 
     // std::cout << "Sonar Range: " << sonar_range << ", Estimated Height: " << getState().position.z() << ", Residual: " << residual << std::endl;
 
@@ -285,12 +279,15 @@ namespace navigation
         Vec3d acc_mean = acc_accum / alignment_count_;
         Vec3d gyro_mean = gyro_accum / alignment_count_;
 
-        // double phi = std::atan2(acc_mean(1), acc_mean(2)); // Roll
-        // double theta = std::atan2(-acc_mean(0), std::sqrt(acc_mean(1) * acc_mean(1) + acc_mean(2) * acc_mean(2))); // Pitch
+        double phi = std::atan2(acc_mean(1), acc_mean(2)); // Roll
+        double theta = std::atan2(-acc_mean(0), std::sqrt(acc_mean(1) * acc_mean(1) + acc_mean(2) * acc_mean(2))); // Pitch
         double psi = 0.0; 
 
-        setState(Vec3d{0.0, 0.0, 0.0}, euler2quat(Vec3d{0, 0, psi}), gyro_mean, Vec3d{1.0, 1.0, 1.0});
+	std::cout << "Alignment Result : [ACC] = " << acc_mean.transpose() << ", [GYRO] = " << gyro_mean.transpose() << std::endl; 
+
+        // setState(init_pos_, init_att_, gyro_mean, Vec3d{1.0, 1.0, 1.0});
         // setState(getState().position, getState().quaternion, getState().gyro_bias, Vec3d{1.0, 1.0, 1.0}); // For DR Alignment
+        setState(init_pos_, euler2quat( Vec3d{0.0, 0.0, psi} ), gyro_mean, Vec3d{1.0, 1.0, 1.0}); 
 
         publishDronePath(getState().position, getState().quaternion);
 
@@ -298,10 +295,6 @@ namespace navigation
 
         prev_state.position = getState().position;
         prev_state.quaternion = getState().quaternion;      
-
-        // std::cout << "Alignment Complete! : " << std::endl;
-        // std::cout << " Accel Bias: [" << acc_mean.x() << ", " << acc_mean.y() << ", " << acc_mean.z() << "]" << std::endl;
-        // std::cout << " Gyro Bias: [" << gyro_mean.x() << ", " << gyro_mean.y() << ", " << gyro_mean.z() << "]" << std::endl;    
 
         printStateInfo(); // Print initial state information after alignment  
       }
@@ -312,37 +305,38 @@ namespace navigation
 
   void Navigation::DeadReckoning(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt)
   {
-    Mat3d Cnb = quat2dcm(prev_state.quaternion);
+    Mat3d Cgb = quat2dcm(prev_state.quaternion);
 
     Mat3d w_skew = skew33(angular_rate);
 
-    Vec3d new_position       = prev_state.position + (Cnb*Cbr*ego_velocity - Cnb*w_skew*tbr)*dt;
+    Vec3d new_position       = prev_state.position + Cgb*Cbi*(Cir*ego_velocity - Cbi*w_skew*tir)*dt;
     
-    Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, angular_rate, dt);
-    
-    // Vec3d new_velocity       = Cbr*ego_velocity;
+    // Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, angular_rate, dt); 
+    Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, Cbi*angular_rate, dt);
+    // Vec3d new_velocity       = Cir*ego_velocity;
 
     setState(new_position, new_quaternion, prev_state.gyro_bias, prev_state.scale);
   }
 
   void Navigation::timeUpdate(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt)
   {
-    Mat3d Cnb = quat2dcm(prev_state.quaternion);
+    Mat3d Cgb = quat2dcm(prev_state.quaternion);
 
     Vec3d inv_scale = prev_state.scale.array().inverse();
     Vec3d hat_vr = ego_velocity.cwiseProduct(inv_scale);        
 
     Mat3d w_skew = skew33(angular_rate);
-    Mat3d sk_br  = skew33(tbr);
+    Mat3d sk_br  = skew33(tir);
 
     // First Row (3x11)
-    Vec3d F12_vec = -(Cnb*Cbr*hat_vr - Cnb * w_skew * tbr);
+    Vec3d F12_vec = -(Cgb*Cbi*Cir*hat_vr - Cgb * Cbi * w_skew * tir);
+   
     Mat3d F12     = skew33(F12_vec);
-    Mat3d F13 = Cnb * sk_br;
-    Mat3d F14 = -Cnb * Cbr * hat_vr.asDiagonal();
+    Mat3d F13 = Cgb * Cbi * sk_br;
+    Mat3d F14 = -Cgb * Cbi * Cir * hat_vr.asDiagonal();
     
     // Second Row
-    Mat3d F23 = -Cnb;
+    Mat3d F23 = -Cgb * Cbi;
     
     // Third Row
     Mat3d F33 = (-1/tau_bg)*Mat3d::Identity();
@@ -356,10 +350,10 @@ namespace navigation
 
     Fk = Mat12d::Identity() + (F * dt) + (0.5 * F * F * dt * dt); // Discretized state transition matrix using second-order Taylor expansion
 
-    Mat3d G11 = Cnb * sk_br;
-    Mat3d G13 = -Cnb * Cbr;
+    Mat3d G11 = Cgb * Cbi * sk_br;
+    Mat3d G13 = -Cgb * Cbi * Cir;
     
-    Mat3d G21 = -Cnb;
+    Mat3d G21 = -Cgb * Cbi;
 
     Mat3d G32 = Mat3d::Identity();
 
@@ -394,7 +388,7 @@ namespace navigation
 
       setState(temp_state_vec.segment(0, 3), temp_state_vec.segment(3, 4), temp_state_vec.segment(7, 3), temp_state_vec.segment(10, 3));
 
-      publishDronePath(getState().position, getState().quaternion);
+      // publishDronePath(getState().position, getState().quaternion);
 
       Pk = (Mat12d::Identity() - K * Hk) * Pk * (Mat12d::Identity() - K * Hk).transpose() + K * Rk * K.transpose();
 
@@ -429,13 +423,51 @@ namespace navigation
     {
       RCLCPP_INFO(this->get_logger(), "Waiting for Alignment process ..."); 
     }
+
   }
 
+  void Navigation::px4_timer_callback(){
+
+    if ( !init_alignment_ )
+    { 
+      px4_pose.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+      px4_pose.timestamp_sample = px4_pose.timestamp;
+      px4_pose.pose_frame = px4_msgs::msg::VehicleOdometry::POSE_FRAME_FRD;
+  
+      Vec3d px4_cur_pos = getState().position;
+      Vec3d px4_cur_att = quat2euler(getState().quaternion);    
+
+      if (ref_frame_ == 0 )
+      {
+        px4_pose.position = { (float)px4_cur_pos(0), -(float)px4_cur_pos(1), -(float)px4_cur_pos(2) };
+        
+        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), -px4_cur_att(1), -px4_cur_att(2)) );
+        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
+      }
+      else if(ref_frame_ == 1 )
+      {
+        px4_pose.position = { (float)px4_cur_pos(0), (float)px4_cur_pos(1), (float)px4_cur_pos(2) };
+      
+        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), px4_cur_att(1), px4_cur_att(2))  );
+        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
+      }
+
+      px4_pose.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_FRD;
+      px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+
+      px4_pose.angular_velocity =  { (float)omega(0), (float)omega(1), (float)omega(2) };
+      
+      px4_pose.position_variance = {0.01, 0.01, 0.01};
+      px4_pose.velocity_variance = {0.01, 0.01, 0.01};
+      px4_pose.orientation_variance = {0.01, 0.01, 0.01};
+
+      px4_state_publisher_->publish(px4_pose);
+    }
+  }
   // void Navigation::setState(Vec3d position, Vec3d velocity, Vec4d quaternion, Vec3d, Vec3d gyro_bias, double scale)
   void Navigation::setState(Vec3d position, Vec4d quaternion, Vec3d gyro_bias, Vec3d scale)
   {
-    drone_state_.position = position;
-    // drone_state_.velocity = velocity;
+    drone_state_.position = position;   // drone_state_.velocity = velocity;
     drone_state_.quaternion = quaternion;
     // drone_state_.accel_bias = accel_bias;
     drone_state_.gyro_bias = gyro_bias;
@@ -447,31 +479,26 @@ namespace navigation
     pose.header.frame_id = "map";
     pose.header.stamp = this->get_clock()->now();
 
-    if(ned_)
-    {
-      pose.pose.position.x = position(0);
-      pose.pose.position.y = -position(1);
-      pose.pose.position.z = -position(2);    
+    // Vec3d global_pos = position + tgb;
+    // Vec4d global_att = quat2euler(quaternion);
 
-      Vec3d temp_eul = quat2euler(quaternion);
-      Vec4d temp_quat = euler2quat(Vec3d{temp_eul.x(), -temp_eul.y(), -temp_eul.z()}); // Convert to NED by negating pitch and yaw
+    // pose.pose.position.x = global_pos(0);
+    // pose.pose.position.y = global_pos(1);
+    // pose.pose.position.z = global_pos(2);    
 
-      pose.pose.orientation.x = temp_quat(1);
-      pose.pose.orientation.y = temp_quat(2);
-      pose.pose.orientation.z = temp_quat(3);
-      pose.pose.orientation.w = temp_quat(0);
-    }
-    else{
-
+    // pose.pose.orientation.x = global_att(1);
+    // pose.pose.orientation.y = global_att(2);
+    // pose.pose.orientation.z = global_att(3);
+    // pose.pose.orientation.w = global_att(0);
+    //
     pose.pose.position.x = position(0);
     pose.pose.position.y = position(1);
     pose.pose.position.z = position(2);    
 
     pose.pose.orientation.x = quaternion(1);
-    pose.pose.orientation.y = quaternion(2); 
+    pose.pose.orientation.y = quaternion(2);
     pose.pose.orientation.z = quaternion(3);
     pose.pose.orientation.w = quaternion(0);
-    }
 
     if (view_path_)
     {
@@ -568,8 +595,6 @@ namespace navigation
   
   void Navigation::printStateInfo()
   {
-    drState printState = getState();
-
     std::cout << "-------------------- Navigation Node is Running ... --------------------" << std::endl;
     std::cout << std::endl;
     std::cout << "[INFO] CHECK DRONE STATE BY SUBSCRIBING '/nav/localState' TOPIC !" << std::endl; 
@@ -579,6 +604,10 @@ namespace navigation
 
   void Navigation::param_setting()
   {
+    this->declare_parameter("imu_topic", "/vectornav/imu");
+    this->declare_parameter("radar_topic", "/mmwave/radarScan");
+    this->declare_parameter("sonar_topic", "/sonar/range");
+
     this->declare_parameter("imu_rate", 200);
     this->declare_parameter("radar_rate", 20);
     this->declare_parameter("init_pos", std::vector<double>{0.0, 0.0, 0.0});
@@ -590,10 +619,10 @@ namespace navigation
     this->get_parameter("align_time", align_time_);    
 
     this->declare_parameter("do_align", true);
-    this->declare_parameter("ned", false);
+    this->declare_parameter("ref_frame",0);
 
     this->get_parameter("do_align", do_align_);
-    this->get_parameter("ned", ned_);    
+    this->get_parameter("ref_frame", ref_frame_);
 
     // Covariance and Noise Parameters
 
@@ -606,6 +635,8 @@ namespace navigation
     this->declare_parameter("gyro_bias_noise", std::vector<double>{0.0001 * d2r, 0.0001 * d2r, 0.0001 * d2r});
     this->declare_parameter("radar_vel_noise", std::vector<double>{0.005, 0.005, 0.005});
     this->declare_parameter("radar_scale_noise", std::vector<double>{0.0001, 0.0001, 0.0001});
+
+    this->declare_parameter("px4_fc_rate", 50);
 
     std::vector<double> p_pos_vec = this->get_parameter("init_pos_cov").as_double_array();
     std::vector<double> p_att_vec = this->get_parameter("init_att_cov").as_double_array();
@@ -625,20 +656,12 @@ namespace navigation
     init_att_ = euler2quat(Vec3d{init_att_vec[0] * d2r, init_att_vec[1] * d2r, init_att_vec[2] * d2r});
     init_gyro_bias_ = Vec3d{init_gyro_bias_vec[0], init_gyro_bias_vec[1], init_gyro_bias_vec[2]};
 
-    // std::cout << "Initial Position: [" << init_pos_.transpose() << "], Initial Attitude (Euler angles in degrees): [" 
-    //           << init_att_vec[0] << ", " << init_att_vec[1] << ", " << init_att_vec[2] << "]" << std::endl;
-
     Pk.diagonal() << p_pos_vec[0], p_pos_vec[1], p_pos_vec[2],
                      p_att_vec[0]*d2r, p_att_vec[1]*d2r, p_att_vec[2]*d2r,
                      p_gyro_bias_vec[0]*d2r, p_gyro_bias_vec[1]*d2r, p_gyro_bias_vec[2]*d2r,
                      p_scale_vec[0], p_scale_vec[1], p_scale_vec[2];                   
 
     Pk = Pk.cwiseProduct(Pk);
-    // RCLCPP_INFO(this->get_logger(), "Initial State Covariance = Position [%.2e, %.2e, %.2e], Attitude [%.2e, %.2e, %.2e], Gyro Bias [%.2e, %.2e, %.2e], Scale [%.2e, %.2e, %.2e]", 
-    //             Pk.diagonal()(0), Pk.diagonal()(1), Pk.diagonal()(2),
-    //             Pk.diagonal()(3), Pk.diagonal()(4), Pk.diagonal()(5),
-    //             Pk.diagonal()(6), Pk.diagonal()(7), Pk.diagonal()(8),
-    //             Pk.diagonal()(9), Pk.diagonal()(10), Pk.diagonal()(11));
 
     process_noise << w_gyro_vec[0]*d2r, w_gyro_vec[1]*d2r, w_gyro_vec[2]*d2r,
                      w_gyro_bias_vec[0]*d2r, w_gyro_bias_vec[1]*d2r, w_gyro_bias_vec[2]*d2r,
@@ -646,11 +669,6 @@ namespace navigation
                      w_radar_scale_vec[0], w_radar_scale_vec[1], w_radar_scale_vec[2];                     
 
     process_noise = process_noise.cwiseProduct(process_noise);
-    // RCLCPP_INFO(this->get_logger(), "Process Noise = Gyro Noise [%.2e, %.2e, %.2e], Gyro Noise Bias [%.2e, %.2e, %.2e], Radar Velocity Noise [%.2e, %.2e, %.2e], Radar Velocity Scale [%.2e, %.2e, %.2e]", 
-    //             process_noise(0), process_noise(1), process_noise(2),
-    //             process_noise(3), process_noise(4), process_noise(5),
-    //             process_noise(6), process_noise(7), process_noise(8),
-    //             process_noise(9), process_noise(10), process_noise(11));
 
     Qk = process_noise.asDiagonal();
 
@@ -668,21 +686,49 @@ namespace navigation
     double sonar_cov = this->get_parameter("sonar_cov").as_double();
     R_sonar = Mat1d::Identity() * sonar_cov * sonar_cov;
 
+    this->declare_parameter("body_t_imu", std::vector<double>{0.0, 0.0, 0.0});
+    this->declare_parameter("body_R_imu", std::vector<double>{0.0, 0.0, 0.0});
+
     this->declare_parameter("imu_t_radar", std::vector<double>{0.0, 0.0, 0.0});
     this->declare_parameter("imu_R_radar", std::vector<double>{0.0, 0.0, 0.0});
+
     this->declare_parameter("imu_t_sonar", std::vector<double>{0.0, 0.0, 0.0});
+    this->declare_parameter("imu_t_uwb", std::vector<double>{0.0, 0.0, 0.0});
+
+    std::vector<double> body_t_imu_ = this->get_parameter("body_t_imu").as_double_array();
+    std::vector<double> body_R_imu_ = this->get_parameter("body_R_imu").as_double_array();
 
     std::vector<double> imu_t_radar_ = this->get_parameter("imu_t_radar").as_double_array();
     std::vector<double> imu_R_radar_ = this->get_parameter("imu_R_radar").as_double_array();
-    std::vector<double> imu_t_sonar_ = this->get_parameter("imu_t_sonar").as_double_array();
-        
-    Cbr = euler2dcm(Vec3d({imu_R_radar_[0] * d2r, imu_R_radar_[1] * d2r, imu_R_radar_[2] * d2r  }));
-    tbr = Vec3d({imu_t_radar_[0], imu_t_radar_[1], imu_t_radar_[2]});
 
-    tis = Vec3d({imu_t_sonar_[0], imu_t_sonar_[1], imu_t_sonar_[2]});
+    std::vector<double> imu_t_sonar_ = this->get_parameter("imu_t_sonar").as_double_array();
+    std::vector<double> imu_t_uwb_ = this->get_parameter("imu_t_uwb").as_double_array();
+
+    Cgb = euler2dcm(Vec3d{init_att_vec[0] * d2r, init_att_vec[1] * d2r, init_att_vec[2] * d2r});
+    tgb = Vec3d{init_pos_vec[0], init_pos_vec[1], init_pos_vec[2]};
+
+    Cbi = euler2dcm( Vec3d( {body_R_imu_[0] * d2r, body_R_imu_[1] * d2r, body_R_imu_[2] * d2r} ));
+    tbi = Vec3d( {body_t_imu_[0], body_t_imu_[1], body_t_imu_[2]} );
+
+    Cir = euler2dcm(Vec3d({imu_R_radar_[0] * d2r, imu_R_radar_[1] * d2r, imu_R_radar_[2] * d2r  }));
+    tir = Vec3d({imu_t_radar_[0], imu_t_radar_[1], imu_t_radar_[2]});
+
+    tis = Vec3d( {imu_t_sonar_[0], imu_t_sonar_[1], imu_t_sonar_[2]} );
+    tiu = Vec3d( {imu_t_uwb_[0], imu_t_uwb_[1], imu_t_uwb_[2]} );
     
+    Cbr = Cbi * Cir;
+    tbr = tbi + Cbi * tir;
+ 
+    tbu = tbi + Cbi * tiu;   
+
+    this->get_parameter("imu_topic", imu_topic_);
+    this->get_parameter("radar_topic", radar_topic_);
+    this->get_parameter("sonar_topic", sonar_topic_);
+
     this->declare_parameter("view_path", false);
     this->get_parameter("view_path", view_path_);
+
+    this->get_parameter("px4_fc_rate", px4_fc_rate_);
   }
 
 

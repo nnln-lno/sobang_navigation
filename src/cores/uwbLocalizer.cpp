@@ -14,6 +14,7 @@ namespace navigation
         this->declare_parameter("anchor_pos_z", std::vector<double>{0.0, 0.0, 0.0});
         this->declare_parameter("num_anchors", 0);
         this->declare_parameter("sim_sonar", false);
+        this->declare_parameter("uwb_topic", "/uwb/range");
         this->declare_parameter("is_imu_ned", false);
 
         std::vector<uint64_t> tmp;
@@ -44,7 +45,7 @@ namespace navigation
             id_matcher_[i] = anchor_id_lists_[i];
             uwb_struct_[i].anchor_id = anchor_id_lists_[i];
             uwb_struct_[i].anchor_position_x_ = anchor_list_x_[i];
-            uwb_struct_[i].anchor_position_y_ = -anchor_list_y_[i];
+            uwb_struct_[i].anchor_position_y_ = anchor_list_y_[i];
             uwb_struct_[i].anchor_position_z_ = anchor_list_z_[i];
 
             setUwbMarker(uwb_struct_[i]);
@@ -52,7 +53,7 @@ namespace navigation
             anchor_marker_array.markers.push_back(single_anchor_);
             text_marker_array.markers.push_back(text_marker_);
 
-            anchor_positions_.push_back(Vec3d(anchor_list_x_[i], -anchor_list_y_[i], anchor_list_z_[i]));
+            anchor_positions_.push_back(Vec3d(anchor_list_x_[i], anchor_list_y_[i], anchor_list_z_[i]));
         }
 
         mark_timer_ = this->create_wall_timer(100ms, std::bind(&UWBLocalizer::timer_callback, this));
@@ -74,15 +75,13 @@ namespace navigation
 
     void UWBLocalizer::multilateration(const uwb_driver::msg::UwbRange::SharedPtr msg)
     {
+
         if (!do_multilateration_)
         {
             return;
         }
 
         Vec3d opt_pos = getCurrentPosition();
-        
-        // std::cout << "Current Position: [" << opt_pos.transpose() << "], Received UWB Range Data: [";
-        // Vec3d opt_pos = Vec3d{0.0, 0.0, 0.0}; // For testing without DR
 
         // Multilateration part
         std::vector<float> dist = msg->dist; // UWB range measurements to anchors
@@ -149,10 +148,8 @@ namespace navigation
                         uwb_estimated_position_.point.y = opt_pos.y();
                         uwb_estimated_position_.point.z = opt_pos.z();
 
-                        // std::cout << "estimated Position: [" << opt_pos.transpose() << "], Error: " << err_arr(opt) << std::endl;
-
                         uwb_position_publisher_->publish(uwb_estimated_position_);
-                        // RCLCPP_INFO(this->get_logger(), "Success to publish ! Position : [%.2f, %.2f, %.2f], Error: %.4f", opt_pos.x(), opt_pos.y(), opt_pos.z(), err_arr(opt));
+                        // std::cout << "Estimated Pos : " << opt_pos.x() << ", " << opt_pos.y() << ", " << opt_pos.z() << std::endl;
                         return;
                     }
 
@@ -180,7 +177,6 @@ namespace navigation
                 uwb_estimated_position_.point.z = pos_arr(2, min_idx);
 
                 uwb_position_publisher_->publish(uwb_estimated_position_);
-                // RCLCPP_INFO(this->get_logger(), "Multilateration did not converge after full iteration with error %.4f", min_err);
             }
         }
         else if ((count >= 1) && (count <= 3))
@@ -227,20 +223,6 @@ namespace navigation
     {
         // 마커 현재 퍼블리시 안되고있습니다. [TBD]
         uwb_marker_publisher_->publish(anchor_marker_array);
-        // uwb_text_publisher_->publish(text_marker_array);
-
-        // if (sim_sonar_)
-        // {
-        //     sensor_msgs::msg::Range sonar_msg_;
-        //     sonar_msg_.header.frame_id = "map";
-        //     sonar_msg_.header.stamp = this->get_clock()->now();
-        
-        //     std::mt19937 rng{std::random_device{}()};
-        //     double ht = 0.96 + 0.1* std::normal_distribution<double>{0.0, 0.5}(rng); 
-        //     sonar_msg_.range = ht;
-
-        //     sonar_publisher_->publish(sonar_msg_);
-        // }        
     }
 
     void UWBLocalizer::setUwbMarker(uwbMeasurement uwb_info)
