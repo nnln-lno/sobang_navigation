@@ -32,6 +32,8 @@ namespace navigation
             radar_points_(2,i) = *iter_z;
 
             radar_velocities_(i) = *iter_vel;
+
+	    // std::cout << radar_velocities_(i);
             // Logic to parse radar pointcloud data and extract points and velocities would go here
         }
         
