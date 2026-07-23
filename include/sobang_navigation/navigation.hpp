@@ -12,6 +12,7 @@
 #include "geometry_msgs/msg/pose.hpp"
 
 #include "px4_msgs/msg/vehicle_odometry.hpp"
+#include "px4_msgs/msg/distance_sensor.hpp"
 
 #include "sobang_navigation/msg/local_state.hpp"
 #include "sobang_navigation/msg/uwb_data.hpp"
@@ -110,7 +111,8 @@ private:
   rclcpp::Subscription<sobang_navigation::msg::UwbData>::SharedPtr uwb_range_subscriber_;
 
   // Subscriber - Subscribe Sonar Information
-  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sonar_subscriber_;
+  // rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sonar_subscriber_;
+  rclcpp::Subscription<px4_msgs::msg::DistanceSensor>::SharedPtr sonar_subscriber_;
 
   // Publisher - Publish path to Rviz2 [TBD]
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
@@ -129,7 +131,8 @@ private:
 
   void uwbRangeCallback(const sobang_navigation::msg::UwbData::SharedPtr msg);
 
-  void sonarCallback(const sensor_msgs::msg::Range::SharedPtr msg);
+  // void sonarCallback(const sensor_msgs::msg::Range::SharedPtr msg);
+  void sonarCallback(const px4_msgs::msg::DistanceSensor::SharedPtr msg);
 
   // Time delta calculation for state estimation
   // IMU
@@ -191,8 +194,8 @@ private:
   std::string radar_topic_ = "/mmwave/radarScan";
   std::string sonar_topic_ = "/sonar/range";
 
-  icpState prev_state;
-  icpState current_state;
+  icpState icp_prev_state;
+  icpState icp_current_state;
 
   int imu_cnt = 0;
 

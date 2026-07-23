@@ -12,14 +12,14 @@
     ### Extrinsic Param (Rotation unit is degree :) )
     # imu to body transformation
     body_t_imu : [0.0, 0.0, 0.0]
-    body_R_imu : [180.0, 0.0, 0.0]
+    body_R_imu : [180.0, 0.0, 90.0]
     # radar to imu transformation
-    imu_t_radar : [-0.1, 0.0, 0.07]
-    imu_R_radar : [180.0, 0.0, 0.0]
+    imu_t_radar : [-0.0, 0.0, 0.0]
+    imu_R_radar : [0.0, 0.0, 90.0]
     # uwb tag to imu translation
-    imu_t_uwb : [-0.06, 0.0, -0.065]
+    imu_t_uwb : [-0.0, 0.0, -0.0]
     # snoar to imu translation
-    imu_t_sonar : [0.0, -0.05, -0.04]
+    imu_t_sonar : [0.0, -0.00, -0.1]
     
     
 sobang_navigation_node:
@@ -27,20 +27,20 @@ sobang_navigation_node:
   ros__parameters:  
     ### IMU Setting 
     imu_topic : "/imu_apps"
-    imu_rate: 200
+    imu_rate: 535
     do_align : false
     align_time : 20.0
     ### Radar Setting
     radar_topic : "/mmwave/radarScan"
     radar_rate : 20    
     # Sonar Setting
-    sonar_topic : "/sonar/range"
+    sonar_topic : "/fmu/out/distance_sensor"
     sonar_rate : 10
 
     # Prior Information (with respect to  Reference Frame)
     init_pos : [0.0, 0.0, 0.0]
-    init_att : [0.0, 0.0, 0.0]
-    init_gyro_bias : [0.011633, 0.00770174, 0.00376046]
+    init_att : [180.0, 0.0, 0.0]
+    init_gyro_bias : [-0.000564293, -0.0294942, 0.00547228]
     
     # Standard Deviations of initial state covariance param
     init_pos_cov : [0.8, 0.8, 0.8]    
@@ -55,13 +55,13 @@ sobang_navigation_node:
     radar_scale_noise : [0.0001, 0.0001, 0.0001]
     
     # Measurement Covariance
-    uwb_cov : [5.5, 5.5, 4.5]
+    uwb_cov : [5.5, 5.5, 0.5]
     uwb_range_cov : 5.5
     sonar_cov : 0.1
 
     # Other settings
     view_state : false
-    view_path : false
+    view_path : true
     px4_fc_rate : 50
 
 uwb_localizer_node:
