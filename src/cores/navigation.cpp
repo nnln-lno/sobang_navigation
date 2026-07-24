@@ -235,12 +235,12 @@ namespace navigation
     // double sonar_range = msg->range;
     double sonar_range = msg->current_distance;
 
-    double residual = (sonar_range) - (getState().position.z() - tis.z()); // Assuming sonar measures height
+    double residual = (sonar_range) - ( -(getState().position.z() - tis.z()) ); // Assuming sonar measures height
     // std::cout << "Range : " << sonar_range << ", Current z : " << getState().position.z() << std::endl;
     // std::cout << "Sonar Range: " << sonar_range << ", Estimated Height: " << getState().position.z() << ", Residual: " << residual << std::endl;
 
     MatXd Hk = MatXd::Zero(1, 12);
-    Hk(0, 2) = 1.0; // Derivative of measurement w.r.t z position
+    Hk(0, 2) = -1.0; // Derivative of measurement w.r.t z position
 
     if (!init_alignment_ && !stop_check)
     {
@@ -290,7 +290,7 @@ namespace navigation
         double theta = std::atan2(-acc_mean(0), std::sqrt(acc_mean(1) * acc_mean(1) + acc_mean(2) * acc_mean(2))); // Pitch
         double psi = 0.0; 
 
-	std::cout << "Alignment Result : [ACC] = " << acc_mean.transpose() << ", [GYRO] = " << gyro_mean.transpose() << std::endl; 
+      	std::cout << "Alignment Result : [ACC] = " << acc_mean.transpose() << ", [GYRO] = " << gyro_mean.transpose() << std::endl; 
 
         // setState(init_pos_, init_att_, gyro_mean, Vec3d{1.0, 1.0, 1.0});
         // setState(getState().position, getState().quaternion, getState().gyro_bias, Vec3d{1.0, 1.0, 1.0}); // For DR Alignment
@@ -323,10 +323,6 @@ namespace navigation
     Vec3d new_position       = prev_state.position + Cgb*Cbi*(Cir*ego_velocity - w_skew*tir)*dt;
     
     Vec3d temp_update = Cgb * Cbi * (Cir * ego_velocity - w_skew * tir);
-    // std::cout << "Current Update : " << temp_update.transpose() << std::endl;
-    // std::cout << "Ego Velocity : " << ego_velocity.transpose() << std::endl;
-    // std::cout << "Check Velocity : " << please.transpose() << std::endl;
-    // std::cout << "Rotation Param : Cgb - " << dcm2euler(Cgb).transpose() << ", Cbi - " << dcm2euler(Cbi).transpose() << std::endl; 
 
     // Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, angular_rate, dt); 
     Vec4d new_quaternion     = quatUpdate(prev_state.quaternion, Cbi*angular_rate, dt);
@@ -454,21 +450,6 @@ namespace navigation
       Vec3d px4_cur_pos = getState().position;
       Vec3d px4_cur_att = quat2euler(getState().quaternion);    
 
-      if (ref_frame_ == 0 )
-      {
-        px4_pose.position = { (float)px4_cur_pos(0), -(float)px4_cur_pos(1), -(float)px4_cur_pos(2) };
-        
-        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), -px4_cur_att(1), -px4_cur_att(2)) );
-        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
-      }
-      else if(ref_frame_ == 1 )
-      {
-        px4_pose.position = { (float)px4_cur_pos(0), (float)px4_cur_pos(1), (float)px4_cur_pos(2) };
-      
-        Vec4d px4_cur_att_q = euler2quat( Vec3d(px4_cur_att(0), px4_cur_att(1), px4_cur_att(2))  );
-        px4_pose.q = { (float)px4_cur_att_q(0), (float)px4_cur_att_q(1), (float)px4_cur_att_q(2), (float)px4_cur_att_q(3) };
-      }
-
       px4_pose.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_FRD;
       px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
 
@@ -498,18 +479,6 @@ namespace navigation
     pose.header.frame_id = "map";
     pose.header.stamp = this->get_clock()->now();
 
-    // Vec3d global_pos = position + tgb;
-    // Vec4d global_att = quat2euler(quaternion);
-
-    // pose.pose.position.x = global_pos(0);
-    // pose.pose.position.y = global_pos(1);
-    // pose.pose.position.z = global_pos(2);    
-
-    // pose.pose.orientation.x = global_att(1);
-    // pose.pose.orientation.y = global_att(2);
-    // pose.pose.orientation.z = global_att(3);
-    // pose.pose.orientation.w = global_att(0);
-    //
     pose.pose.position.x = position(0);
     pose.pose.position.y = position(1);
     pose.pose.position.z = position(2);    
