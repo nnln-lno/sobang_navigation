@@ -41,6 +41,10 @@ bool RadarEstimator::radarParser(const sensor_msgs::msg::PointCloud2::SharedPtr 
     }
   }
 
+  point_size_ = point_cnt;
+  radar_points_.conservativeResize(3, point_cnt);
+  radar_velocities_.conservativeResize(point_cnt);
+
   return true; // Dummy return value
 }
 
@@ -83,9 +87,9 @@ bool RadarEstimator::egoVelocityEstimator() {
   std::random_device rd;
   std::mt19937 g(rd());
 
-  uint8_t max_count_ = 0;
+  int max_count_ = 0;
 
-  std::vector<uint> inlier_indices_;
+  std::vector<int> inlier_indices_;
 
   for (int iter = 0; iter < 200; ++iter) // Example: Shuffle 100 times RANSAC iterations
   {
@@ -110,8 +114,8 @@ bool RadarEstimator::egoVelocityEstimator() {
 
     VecXd residual_ = (y + H * init_est_).cwiseAbs();
 
-    uint8_t inlier_count = 0;
-    std::vector<uint> est_inlier_indices_;
+    int inlier_count = 0;
+    std::vector<int> est_inlier_indices_;
 
     for (int i = 0; i < residual_.size(); i++) 
     {
@@ -159,9 +163,9 @@ bool RadarEstimator::simpleRadar2DIcp(Mat3d R, Vec3d t) {
   double cost_prev = 1e9;
   double delta = 0.3;
 
-  for (uint i = 0; i < 100; i++) {
-    
-    MatXd save_prev = previous_points_;
+  MatXd save_prev = previous_points_;
+
+  for (uint i = 0; i < 100; i++) {        
 
     int match_cnt = 0;
 
@@ -176,7 +180,7 @@ bool RadarEstimator::simpleRadar2DIcp(Mat3d R, Vec3d t) {
     for (int j = 0; j < point_size; j++) {
       
       VecXd xy_err = (prev_2d - trf_2d.col(j).replicate(1, save_prev.cols())).colwise().norm();
-      double ecld_dist = xy_err.norm();
+      // double ecld_dist = xy_err.norm();
 
       Eigen::Index min_idx;
       double min_dist = xy_err.minCoeff(&min_idx);
@@ -193,7 +197,7 @@ bool RadarEstimator::simpleRadar2DIcp(Mat3d R, Vec3d t) {
 
     Mat3d H = Mat3d::Zero();
     Vec3d b = Vec3d::Zero();
-    MatXd J = MatXd::Zero(2, 3);
+    Eigen::Matrix<double, 2, 3> J = MatXd::Zero(2, 3);
 
     double cost = 0.0;
 
@@ -229,8 +233,7 @@ bool RadarEstimator::simpleRadar2DIcp(Mat3d R, Vec3d t) {
           0.0, -1.0,
           -cos(opt_est(2)) * current_points_(0, cur_id) +
               sin(opt_est(2)) * current_points_(1, cur_id);
-
-      J += Jacob;
+      
       // H += Jacob.transpose() * Jacob;
       // b += Jacob.transpose() * err_func;
       H += weight * Jacob.transpose() * Jacob;
@@ -244,6 +247,10 @@ bool RadarEstimator::simpleRadar2DIcp(Mat3d R, Vec3d t) {
 
     Vec3d d_est = -(H + lamb * Mat3d::Identity()).inverse() * b;
     opt_est += d_est;
+
+    if (d_est.norm() < 1e-6) {
+      break;
+    }
 
     if (i > 0) {
       if (cost < cost_prev) 

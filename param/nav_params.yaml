@@ -3,6 +3,7 @@
     # ID of anchors in environments 
     anchor_id_lists : [1,2,3,4,5,6,7,8]
     gt_anchor_id_lists : [1,2,3,4,5,6,7,8]
+    view_anchor : false
     # Reference coordinate system : Local NED Frame = Front(x) Right(y) Down(z)
     # Anchor Position must be matched with Global Reference Frame definition 
     anchor_pos_x : [  15.000,  10.000,  5.000,  0.000,   0.000,  5.000,   10.000,  15.000]
@@ -18,7 +19,7 @@
     # uwb tag to imu translation
     imu_t_uwb : [0.0, -0.05, 0.1]
     # snoar to imu transformationn
-    imu_t_sonar : [0.0, 0.0, -0.18]
+    imu_t_sonar : [0.0, 0.0, 0.18]
    
 sobang_navigation_node:
   ros__parameters:
@@ -27,19 +28,21 @@ sobang_navigation_node:
     imu_rate: 200.0
     do_align : false
     align_time : 30.0
+    use_imu_dt : true
     ### Radar Setting
     radar_topic : "/mmwave/radarScan"
     radar_rate : 20.0    
     # Sonar Setting
     sonar_topic : "/fmu/out/distance_sensor"
     sonar_rate : 10.0
+    sonar_sim  : false
 
     # Prior Information (with respect to  Reference Frame)
     init_pos : [0.0, 0.0, 0.0]
     init_att : [0.0, 0.0, 0.0]    
     init_gyro_bias : [-0.00273072, 7.78259e-05,  0.00105291]
 
-    # Standard Deviations of initial state covariance param
+    # Standard Deviations of initial state covariance param   
     init_pos_cov : [0.8, 0.8, 0.8]    
     init_att_cov : [1.0, 1.0, 1.0]
     init_gyro_bias_cov : [0.001, 0.001, 0.001]
@@ -60,14 +63,15 @@ sobang_navigation_node:
 
     # Measurement Covariance
     uwb_cov : [0.3, 0.3, 2.0]
-    # uwb_cov : [1.0, 0.05, 2.5]
+    # uwb_cov : [5.5, 5.5, 4.5]    
     uwb_range_cov : 2.0
+    # uwb_range_cov : 5.5
     sonar_cov : 0.1
 
     # Other settings
     view_state : false
     view_path : false
-    pub_egovel : false
+    pub_egovel : true
     pub_icp : false
     px4_fc_rate : 50.0
 
