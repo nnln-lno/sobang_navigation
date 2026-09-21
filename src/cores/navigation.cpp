@@ -7,6 +7,7 @@ using namespace std::chrono_literals;
 using std::placeholders::_1;
 
 namespace navigation {
+
 Navigation::Navigation() : Node("sobang_navigation_node"), count_(0) {
   param_setting();
 
@@ -17,64 +18,74 @@ Navigation::Navigation() : Node("sobang_navigation_node"), count_(0) {
   state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/nav/localState", 10);
 
   px4_state_publisher_ = this->create_publisher<px4_msgs::msg::VehicleOdometry>("/fmu/in/vehicle_visual_odometry", 10);
-
+  
   radar_subscriber_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(radar_topic_, sensor_qos, std::bind(&Navigation::radar_callback, this, _1));
-
+  
   // IMU TOPIC CONDITION
-  if ( imu_topic_ == "/imu_apps" )
+  if ( imu_topic_ == "/imu_apps" || imu_topic_ == "/vectornav/imu")
   {
-     imu_subscriber_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic_, sensor_qos, std::bind(&Navigation::imu_callback, this, _1));
-     RCLCPP_INFO(this->get_logger(), "VOXL2 IMU detected : topic name = /imu_apps");
+    imu_subscriber_ = this->create_subscription<sensor_msgs::msg::Imu>(imu_topic_, sensor_qos, std::bind(&Navigation::imu_callback, this, _1));
+    RCLCPP_INFO(this->get_logger(), "VOXL2 OR VECTORNAV IMU detected : topic name = %s", imu_topic_.c_str());
   }
   else if ( imu_topic_ == "/fmu/out/sensor_combined" )
   {
     px4_imu_subscriber_ = this->create_subscription<px4_msgs::msg::SensorCombined>(imu_topic_, sensor_qos, std::bind(&Navigation::px4_imu_callback, this, _1));
-
-    RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined");
+          
+    if (use_imu_dt_)
+    {
+      RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined, using IMU dt from PX4");
+    }
+    else
+    {
+      RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined, using IMU dt from ROS2");
+    }
   }
   // IMU TOPIC CONDITION
+  
+  uwb_position_subscriber_ = this->create_subscription<geometry_msgs::msg::PointStamped>("/uwb/position", 100, std::bind(&Navigation::uwbPositionCallback, this,_1));
 
-  uwb_position_subscriber_ =
-  this->create_subscription<geometry_msgs::msg::PointStamped>(
-    "/uwb/position", 100, std::bind(&Navigation::uwbPositionCallback, this,
-    _1));
+  uwb_range_subscriber_ = this->create_subscription<sobang_navigation::msg::UwbData>("/uwb/range_array", 100, std::bind(&Navigation::uwbRangeCallback, this, _1));
 
-  uwb_range_subscriber_ =
-      this->create_subscription<sobang_navigation::msg::UwbData>(
-          "/uwb/range_array", 100,
-          std::bind(&Navigation::uwbRangeCallback, this, _1));
+  // SONAR TOPIC CONDITION
+  if (sonar_sim_)
+  {
+    sonar_sim_publisher_ = this->create_publisher<sensor_msgs::msg::Range>(sonar_topic_, 10);
+    RCLCPP_INFO(this->get_logger(), "Sonar sensor is replaced with virtual range data with noise!");
+  }
 
-  // SONAR TOPIC CONDITION          
-  if (sonar_topic_ == "/fmu/out/distance_sensor") 
+  if (sonar_topic_ == "/fmu/out/distance_sensor")
   {
     px4_sonar_subscriber_ = this->create_subscription<px4_msgs::msg::DistanceSensor>(sonar_topic_, qos_profile, std::bind(&Navigation::px4_sonarCallback, this, _1));
     RCLCPP_INFO(this->get_logger(), "PX4 Sonar detected : topic name = /fmu/out/distance_sensor");
-  } 
-  else 
+  }
+  else
   {
-    ros2_sonar_subscriber_ = this->create_subscription<sensor_msgs::msg::Range>(sonar_topic_, 10, std::bind(&Navigation::ros2_sonarCallback, this, _1));\
+    ros2_sonar_subscriber_ = this->create_subscription<sensor_msgs::msg::Range>(sonar_topic_, 10, std::bind(&Navigation::ros2_sonarCallback, this, _1));
     RCLCPP_INFO(this->get_logger(), "MB1242 Sonar detected : topic name = %s", sonar_topic_.c_str());
   }
-  // SONAR TOPIC CONDITION    
 
-  if (view_path_) 
+  // SONAR TOPIC CONDITION
+
+  if (view_path_)
   {
     path_publisher_ =
         this->create_publisher<nav_msgs::msg::Path>("/nav/localPath", 10);
     RCLCPP_INFO(this->get_logger(), "Drone Path Publisher Enabled : topic name = /nav/localPath");
   }
 
-  if (pub_egovel_) 
+  if (pub_egovel_)
   {
-    ego_vel_publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/radar/egovel", 10);
-    RCLCPP_INFO(this->get_logger(), "Ego Velocity Publisher Enabled : topic name = /radar/egovel");
+    ego_vel_publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/nav/egovel", 10);
+    RCLCPP_INFO(this->get_logger(), "Ego Velocity Publisher Enabled : topic name = /nav/egovel");
   }
 
-  if (pub_icp_) 
+  if (pub_icp_)
   {
     icp_state_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/icp/pose", 10);
     RCLCPP_INFO(this->get_logger(), "ICP State Publisher Enabled : topic name = /icp/pose");
   }
+
+  optimized_pose_subscriber_ = this->create_subscription<geometry_msgs::msg::PoseStamped>("/gcs/optimized_pose", 10, std::bind(&Navigation::optimized_pose_callback, this, _1));
 
   setState(init_pos_, init_att_, init_gyro_bias_, Vec3d{1.0, 1.0, 1.0}); // for DR alignment
 
@@ -85,8 +96,8 @@ Navigation::Navigation() : Node("sobang_navigation_node"), count_(0) {
 
 // [IMU CALLBACK]
 void Navigation::imu_callback(const sensor_msgs::msg::Imu::SharedPtr i_msg) {
-  sensor_msgs::msg::Imu::SharedPtr msg =
-      std::make_shared<sensor_msgs::msg::Imu>(*i_msg);
+
+  sensor_msgs::msg::Imu::SharedPtr msg = std::make_shared<sensor_msgs::msg::Imu>(*i_msg);
 
   setImuCurrentTime(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
 
@@ -162,10 +173,9 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
 {
   px4_msgs::msg::SensorCombined::SharedPtr msg = std::make_shared<px4_msgs::msg::SensorCombined>(*i_msg);
 
-  // auto t =  std::chrono::steady_clock::now();
-  // auto us = std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
-
-  setImuCurrentTime(msg->timestamp * 1e-6);
+  // sample_time_ = msg->timestamp; // For Real Flight
+  sample_time_ = this->get_clock()->now().nanoseconds() / 1000; // For Simulation
+  setImuCurrentTime(msg->timestamp * 1e-6);  
 
   imu_cnt++;
 
@@ -181,25 +191,22 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
     return; // Skip processing until initial alignment is complete
   }
 
-  if (getImuCurrentTime() <= getImuPreviousTime()) {
-    RCLCPP_WARN(this->get_logger(), "[WARN] Received IMU data with non-increasing timestamp. Skipping this measurement.");
-    return;
-  }
-
-  if (getImuCurrentTime() <= getImuPreviousTime())
+  if (std::fabs(getImuCurrentTime() - getImuPreviousTime()) >= ((1.0 / imu_rate) * 100.0))
   {
-    RCLCPP_WARN(this->get_logger(), "[WARN] Received IMU data with non-increasing timestamp. Set delta to default.");
-    imu_time_delta_ = 1.0 / imu_rate; // Reset to default time delta based on the expected IMU rate
-  }
-
-  if (abs(getImuCurrentTime() - getImuPreviousTime()) >= ((1.0 / imu_rate) * 100.0))
-  {
-      RCLCPP_WARN(this->get_logger(), "[WARN] IMU time delta is too large. Skipping this measurement.");
+      RCLCPP_WARN(this->get_logger(), "[WARN] IMU time delta is too large ( %.3f ). Skipping this measurement.", abs(getImuCurrentTime() - getImuPreviousTime()));
       imu_time_delta_ = 1.0 / imu_rate; // Reset to default time delta based on the expected IMU rate
   }
   else
   {
+    if (getImuCurrentTime() <= getImuPreviousTime())
+    {
+      RCLCPP_WARN(this->get_logger(), "[WARN] Received IMU data with non-increasing timestamp. Set delta to default.");
+      imu_time_delta_ = 1.0 / imu_rate; // Reset to default time delta based on the expected IMU rate
+    }
+    else
+    {
       setImuTimeDelta();
+    }      
   }
 
   if (imu_cnt == 1)
@@ -210,15 +217,40 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
   Vec3d w_b = Vec3d{msg->gyro_rad[0], msg->gyro_rad[1],msg->gyro_rad[2]} - getState().gyro_bias;
   omega = w_b;
 
+  if (!use_imu_dt_)
+  {
+    acc_stack_ += ( Vec3d{msg->accelerometer_m_s2[0], msg->accelerometer_m_s2[1], msg->accelerometer_m_s2[2]} - Vec3d{0.0, 0.0, -9.80665} ) * getImuTimeDelta();
+  }
+  else
+  {
+    acc_stack_ += ( Vec3d{msg->accelerometer_m_s2[0], msg->accelerometer_m_s2[1], msg->accelerometer_m_s2[2]} - Vec3d{0.0, 0.0, -9.80665} ) * msg->accelerometer_integral_dt * 1e-6;
+  }
+
   if (!has_problems_) 
   {
-    DeadReckoning(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
-    timeUpdate(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
-  } else 
+    if (!use_imu_dt_)
+    {
+      DeadReckoning(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
+      timeUpdate(getState(), radar_estimator_.getEgoVelocity(), w_b, getImuTimeDelta());
+    }
+    else
+    {
+      DeadReckoning(getState(), radar_estimator_.getEgoVelocity(), w_b, msg->gyro_integral_dt * 1e-6);
+      timeUpdate(getState(), radar_estimator_.getEgoVelocity(), w_b, msg->gyro_integral_dt * 1e-6);
+    }
+  } 
+  else 
   {
-    // MODE 4 : If radar has problems, Zero Velocity Update conducted
-    DeadReckoning(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, getImuTimeDelta());
-    timeUpdate(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, getImuTimeDelta());
+    if (!use_imu_dt_)
+    {
+      DeadReckoning(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, getImuTimeDelta());
+      timeUpdate(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, getImuTimeDelta());
+    }
+    else
+    {
+      DeadReckoning(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, msg->gyro_integral_dt * 1e-6);
+      timeUpdate(getState(), Vec3d{0.0, 0.0, 0.0}, w_b, msg->gyro_integral_dt * 1e-6);
+    }
   }
 
   Pk = (Fk * Pk * Fk.transpose()) + (Gk * Qk * Gk.transpose());
@@ -229,13 +261,17 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
   publishDronePath(getState().position, getState().quaternion);
 
   setImuPreviousTime(getImuCurrentTime());
-
 }
 
 // [RADAR CALLBACK]
 void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-  
+
   radar_valid = 0; // If radar callback is called, reset the radar_valid counter to 0
+
+  if (has_problems_) {
+    RCLCPP_INFO(this->get_logger(), "[INFO] Radar Sensor Recovered. Resuming radar processing.");
+    has_problems_ = false; // Reset the radar problem flag
+  }
 
   radar_estimator_.radarParser(msg); // Here, parsing point cloud data.
 
@@ -280,10 +316,8 @@ void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr m
   } 
   else 
   {
-    radar_estimator_.setEgoVelocity(Vec3d{0.0, 0.0, 0.0}); // During initial alignment, we assume the drone is stationary.
-    return;
+    radar_estimator_.setEgoVelocity(Vec3d{0.0, 0.0, 0.0}); // During initial alignment, we assume the drone is stationary.    
   }
-
 
   // 현재 자세와 이전 기준 자세간의 상대 변위 및 상대 회전 계산
   Mat3d rel_R = (quat2dcm(icp_prev_state.quaternion) * Cbi * Cir).transpose() * (quat2dcm(icp_current_state.quaternion) * Cbi * Cir);
@@ -293,12 +327,11 @@ void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr m
   // 10번째 스캔 마다 ICP 수행                
   if (icp_cnt % 10 == 0) 
   {
-
     // 현재 시점 점군 정보를 넣고 ICP 수행
     radar_estimator_.setCurrentPoints(radar_estimator_.getPointMatrix());
 
-    if (radar_estimator_.simpleRadar2DIcp(rel_R, rel_t)) {
-
+    if (radar_estimator_.simpleRadar2DIcp(rel_R, rel_t)) 
+    {
       icpState icp_result = radar_estimator_.getIcpPose();
 
       // ICP 기반의 자세 누적
@@ -349,7 +382,17 @@ void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr m
       Mat3d ATB = A.transpose() * B;
 
       double ATB_th_ = acos(std::clamp((ATB.trace() - 1.0) / 2.0, -1.0, 1.0));
-      Vec3d ATB_att = (ATB_th_) / (2.0 * sin(ATB_th_)) * Vec3d{ATB(2, 1) - ATB(1, 2), ATB(0, 2) - ATB(2, 0), ATB(1, 0) - ATB(0, 1)};
+
+      Vec3d ATB_att = Vec3d::Zero(3, 1);
+
+      if (ATB_th_ < 1e-6)
+      {
+        ATB_att = 0.5 * Vec3d{ATB(2, 1) - ATB(1, 2), ATB(0, 2) - ATB(2, 0), ATB(1, 0) - ATB(0, 1)};
+      } 
+      else
+      {
+        ATB_att = (ATB_th_) / (2.0 * sin(ATB_th_)) * Vec3d{ATB(2, 1) - ATB(1, 2), ATB(0, 2) - ATB(2, 0), ATB(1, 0) - ATB(0, 1)};
+      }            
       Mat3d Jr_inv = Mat3d::Identity() + (0.5 * skew33(ATB_att));
 
       // STATE CLONING
@@ -380,6 +423,7 @@ void Navigation::radar_callback(const sensor_msgs::msg::PointCloud2::SharedPtr m
   } 
   setRadarTimeDelta();
   setRadarPreviousTime(getRadarCurrentTime());
+
 }
 
 // [UWB POSITION CALLBACK]
@@ -500,29 +544,44 @@ void Navigation::px4_sonarCallback(const px4_msgs::msg::DistanceSensor::SharedPt
 
   sonar_cnt++;
 
+  double d_cond_    = 0.7;
+  double d_range_  = sonar_range - prev_dist;
+  // Normalized Innovation Squared (NIS) for sonar measurement
+  double d_height_ = (sonar_range - ( -(getState().position.z() + tis.z()) )) * (sonar_range - ( -(getState().position.z() + tis.z()) )) * ( 1 / ( Pk(2,2) + sonar_cov ) ) ;
+  double d_imu     = d_range_ - acc_stack_(2);
+
+  // [PRINT DEBUG INFO]
+  // RCLCPP_INFO(this->get_logger(), "[SONAR]  sonar_range = %.4f, prev_dist = %.4f, d_height_ = %.4f, d_imu = %.4f, est_pos_z = %.4f", sonar_range, prev_dist, d_height_, d_imu, ( -(getState().position.z() + tis.z()) ));
+
   // Sonar measurement filtering [To be developed]
+  prev_dist = sonar_range;
+  acc_stack_ = Vec3d{0.0, 0.0, 0.0}; 
+
   if (sonar_range >= 7.64999 ) {  
     return;
-  } 
-  else if ( ( std::abs(sonar_range - prev_dist) >= 1.5 ) && sonar_cnt < 10) 
-  {
-    return;
-  }
-  else if (sonar_range <= 0.209) 
+  } // No measurement update if sonar range is too large ( Out of Range Data )
+  else if (sonar_range <= 0.201) 
   {
     sonar_range = 0.0;    
   }
 
-  double residual = (sonar_range) - (-(getState().position.z() - tis.z())); // Assuming sonar measures height
+  if ( ( d_height_ < 25.0 ) && ( abs(d_imu) < d_cond_ ) )
+  {
+    double residual = (sonar_range) - (- (getState().position.z() + tis.z())); // Assuming sonar measures height  
 
-  prev_dist = sonar_range; // Keep recently updated sonar distance for next callback
+    MatXd Hk = MatXd::Zero(1, 12);
+    Hk(0, 2) = -1.0; // Derivative of measurement w.r.t z position
 
-  MatXd Hk = MatXd::Zero(1, 12);
-  Hk(0, 2) = -1.0; // Derivative of measurement w.r.t z position
+    if (!init_alignment_) { measurementUpdate(getState(), Vec1d{residual}, Hk, R_sonar); } // [HYPERPARAM] Sonar measurement noise covariance
 
-  if (!init_alignment_) { measurementUpdate(getState(), Vec1d{residual}, Hk, R_sonar); } // [HYPERPARAM] Sonar measurement noise covariance
+    sonar_cnt = 0;  
+    // Reset the accumulated acceleration after a valid sonar measurement
+  }
+}
 
-  sonar_cnt = 0;  
+void Navigation::optimized_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+
 }
 
 // Basic Navigation Functions
@@ -650,11 +709,11 @@ void Navigation::DeadReckoning(const drState prev_state, Vec3d ego_velocity, Vec
 
   Mat3d w_skew = skew33(angular_rate);
 
-  Vec3d new_position = prev_state.position + Cgb * Cbi * (Cir * ego_velocity - w_skew * tir) * dt;
+  Vec3d new_position = prev_state.position + Cgb * Cbi * (Cir * ego_velocity.cwiseQuotient(getState().scale) - w_skew * tir) * dt;
 
   Vec4d new_quaternion = quatUpdate(prev_state.quaternion, Cbi * angular_rate, dt);
 
-  setState(new_position, new_quaternion, prev_state.gyro_bias, prev_state.scale);
+  setState(new_position, new_quaternion, prev_state.gyro_bias, prev_state.scale);  
 }
 
 void Navigation::timeUpdate(const drState prev_state, Vec3d ego_velocity, Vec3d angular_rate, double dt) {
@@ -776,8 +835,27 @@ void Navigation::measurementUpdate(const drState predicted_state, VecXd residual
 
 void Navigation::timer_callback() {
 
-  count_++;
-  radar_valid++;
+  count_++;  
+
+  if (imu_cnt > 0) { radar_valid++; }
+
+  if(sonar_sim_)
+  {
+    sensor_msgs::msg::Range sonar_sim_range;
+
+    sonar_sim_range.header.stamp = this->now();
+    sonar_sim_range.header.frame_id = "map";
+    sonar_sim_range.radiation_type = sensor_msgs::msg::Range::ULTRASOUND;
+    sonar_sim_range.field_of_view = 0.1745f;
+    sonar_sim_range.min_range = 0.2f;
+    sonar_sim_range.max_range = 7.65f;
+
+    std::mt19937 rng{std::random_device{}()};
+    
+    sonar_sim_range.range = 0.96 + 0.05* std::normal_distribution<double>{0.0, 0.5}(rng); 
+
+    sonar_sim_publisher_->publish(sonar_sim_range);
+  }
 
   if (!init_alignment_ && radar_valid >= 50) {
     RCLCPP_INFO_ONCE(this->get_logger(), "[WARN] Radar sensor is aborted.. Position is replaced by uwb position info !");
@@ -812,7 +890,12 @@ void Navigation::px4_timer_callback() {
   if (!init_alignment_ && !has_problems_) 
   {
     px4_pose.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-    px4_pose.timestamp_sample = px4_pose.timestamp;
+    px4_pose.timestamp_sample = sample_time_;
+
+    // [FOR DEBUGGING]
+    // double delta_time_ms = ((int64_t)px4_pose.timestamp - (int64_t)px4_pose.timestamp_sample) / 1000.0; // Convert to milliseconds
+    // RCLCPP_INFO(this->get_logger(), "[INFO] PX4 Odometry Delta Time : %.3f ms", delta_time_ms);
+
     px4_pose.pose_frame = px4_msgs::msg::VehicleOdometry::POSE_FRAME_NED;
 
     Vec3d px4_cur_pos = getState().position;
@@ -835,7 +918,7 @@ void Navigation::px4_timer_callback() {
     px4_pose.orientation_variance = {(float)px4_att_cov_(0), (float)px4_att_cov_(1),
                                      (float)px4_att_cov_(2)};
 
-    px4_state_publisher_->publish(px4_pose);
+    px4_state_publisher_->publish(px4_pose);    
   }
 }
 
@@ -861,10 +944,25 @@ void Navigation::publishDronePath(Vec3d position, Vec4d quaternion) {
     pose.pose.orientation.z = quaternion(3);
     pose.pose.orientation.w = quaternion(0);
 
-    if (view_path_) {
+    if (view_path_) 
+    {
+      geometry_msgs::msg::PoseStamped rviz_pose;
+      
+      rviz_pose.header.frame_id = "map";
+      rviz_pose.header.stamp = this->get_clock()->now();
+
+      rviz_pose.pose.position.x = position(0);
+      rviz_pose.pose.position.y = -position(1);
+      rviz_pose.pose.position.z = -position(2);
+
+      rviz_pose.pose.orientation.x = quaternion(1);
+      rviz_pose.pose.orientation.y = quaternion(2);
+      rviz_pose.pose.orientation.z = quaternion(3);
+      rviz_pose.pose.orientation.w = quaternion(0);
+
       localPath.header.frame_id = "map";
       localPath.header.stamp = this->get_clock()->now();
-      localPath.poses.push_back(pose);
+      localPath.poses.push_back(rviz_pose);
       path_publisher_->publish(localPath);
     }
 
@@ -994,6 +1092,8 @@ void Navigation::printStateInfo() {
   std::cout << "------------------------------------------------------------------------" << std::endl;
 }
 
+// ----------------------- PARAMETER SETTING -----------------------
+
 void Navigation::param_setting() {
 
   // DECLARE PARAMETERS
@@ -1011,6 +1111,7 @@ void Navigation::param_setting() {
   this->declare_parameter("init_acc_bias", std::vector<double>{0.0, 0.0, 0.0});  
 
   this->declare_parameter("do_align", true);
+  this->declare_parameter("use_imu_dt", true);
 
   this->declare_parameter("init_pos_cov", std::vector<double>{0.5, 0.5, 0.5});
   this->declare_parameter("init_att_cov", std::vector<double>{1.0 * d2r, 1.0 * d2r, 1.0 * d2r});
@@ -1038,7 +1139,8 @@ void Navigation::param_setting() {
   this->get_parameter("sonar_topic", sonar_topic_);
   this->get_parameter("align_time", align_time_);
 
-  this->get_parameter("do_align", do_align_);
+  this->get_parameter("do_align", do_align_);  
+  this->get_parameter("use_imu_dt", use_imu_dt_);
 
   std::vector<double> p_pos_vec = this->get_parameter("init_pos_cov").as_double_array();
   std::vector<double> p_att_vec = this->get_parameter("init_att_cov").as_double_array();
@@ -1112,7 +1214,7 @@ void Navigation::param_setting() {
 
   this->declare_parameter("sonar_cov", 0.1);
 
-  double sonar_cov = this->get_parameter("sonar_cov").as_double();
+  sonar_cov = this->get_parameter("sonar_cov").as_double();
   R_sonar = Mat1d::Identity() * sonar_cov * sonar_cov;
 
   // ---------------------------------------------------
@@ -1154,6 +1256,9 @@ void Navigation::param_setting() {
   tbr = tbi + Cbi * tir;
 
   tbu = tbi + Cbi * tiu;
+
+  this->declare_parameter("sonar_sim", false);
+  this->get_parameter("sonar_sim", sonar_sim_);
 
   this->declare_parameter("view_path", false);
   this->get_parameter("view_path", view_path_);
