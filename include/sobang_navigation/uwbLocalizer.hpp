@@ -51,16 +51,24 @@ namespace navigation
 
         std::vector<int64_t> anchor_id_lists_;
 
+        visualization_msgs::msg::Marker single_anchor_;
+        visualization_msgs::msg::MarkerArray array_anchor_;
+
         bool visualization_flag_ = true;
         bool do_multilateration_ = false;
+        bool view_anchor_ = true;
         uint num_anchors_;
 
         uwbMeasurement uwb_struct_[20];
         int id_matcher_[20] = {-1};
 
+        rclcpp::TimerBase::SharedPtr anchor_timer_;
+
         rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr uwb_position_publisher_;
 
         rclcpp::Publisher<sobang_navigation::msg::UwbData>::SharedPtr uwb_range_publisher_;
+
+        rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr uwb_anchor_publisher_;
 
         rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr sonar_publisher_;
 
@@ -71,6 +79,10 @@ namespace navigation
         void multilateration(const uwb_driver::msg::UwbRange::SharedPtr msg);
 
         void setCurrentPose(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+
+        void anchor_timer();
+
+        void setUWBMarker(uwbMeasurement uwb_info);
 
         Vec3d getCurrentPosition();
 

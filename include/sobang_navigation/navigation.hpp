@@ -58,7 +58,7 @@ public:
   Vec3d acc = Vec3d::Zero();
   Vec3d omega = Vec3d::Zero();
   
-  Vec3d acc_accum{0.0, 0.0, 0.0};
+  Vec3d acc_accum{0.0, 0.0, 0.0};  
   Vec3d acc_stack_ = Vec3d::Zero();
   
   Vec3d gyro_accum{0.0, 0.0, 0.0};
@@ -99,6 +99,7 @@ public:
    */
   ///@{
   Vec6d icp_cov_ = Vec6d::Zero(); // Measurement noise covariance for ICP
+  double sonar_cov = 0.1;
 
   Mat1d R_sonar = Mat1d::Identity() * 0.1; // Measurement noise covariance for Sonar
   Mat3d R_uwb = Mat3d::Identity() * 5.5; // Measurement noise covariance for UWB
@@ -122,6 +123,8 @@ public:
   double radar_time_delta_ = 0.0;
   
   double align_time_ = 10.0; // Time duration for initial alignment using IMU data
+
+  double sample_time_ = 0.0;
   ///@}
 
   /** @name nav_params
@@ -134,9 +137,12 @@ public:
 
   bool init_alignment_ = true; // 초기정렬 종료 여부  
   bool do_align_ = true; // 초기정렬 수행 여부
+  bool use_imu_dt_ = true; // True 시, IMU 토픽에서 들어오는 dt값 사용.
 
   bool view_state_ = false; // 터미널에 상태정보 출력 여부
   bool view_path_ = false; // Rviz2에 경로정보 출력 여부
+
+  bool sonar_sim_ = false;
 
   bool has_problems_ = false; // 레이더 센서의 문제 여부
 
@@ -199,6 +205,8 @@ public:
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr icp_state_publisher_; // ICP 기반의 자세 및 위치 정보를 퍼블리셔 [Optional]
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_; // 전체 궤적에 대한 메시지를 전달하기 위한 퍼블리셔 [Optional]
+
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr sonar_sim_publisher_; // Sonar 연결 없이 시뮬레이션으로 데이터 취득시 [Optional]
   ///@}
 
   /** @name Subscriber Statement
@@ -218,6 +226,8 @@ public:
   rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr ros2_sonar_subscriber_; // ROS Sonar 패키지 데이터를 수신하기 위한 서브스크라이버 [Optional]
 
   rclcpp::Subscription<px4_msgs::msg::DistanceSensor>::SharedPtr px4_sonar_subscriber_; // PX4에 연결된 Sonar 데이터를 수신하기 위한 서브스크라이버
+
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr optimized_pose_subscriber_; // PX4 EKF2에 전달되는 VehicleOdometry 데이터를 수신하기 위한 서브스크라이버
   ///@}
 
   /** @name Functions
@@ -240,6 +250,8 @@ public:
   void ros2_sonarCallback(const sensor_msgs::msg::Range::SharedPtr msg); // ROS Sonar 패키지 데이터 콜백
 
   void px4_sonarCallback(const px4_msgs::msg::DistanceSensor::SharedPtr msg); // PX4 Sonar 데이터 콜백
+
+  void optimized_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg); // GCS 에서 전달되는 최적화된 Pose 데이터를 수신하기 위한 콜백
 
   /// @brief 항법을 위한 유틸 함수들
   void setImuCurrentTime(double t); // 현재 측정된 IMU 시간 설정

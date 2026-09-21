@@ -14,15 +14,18 @@ UWBLocalizer::UWBLocalizer() : Node("uwb_localizer_node") {
   this->declare_parameter("sim_sonar", false);
   this->declare_parameter("uwb_topic", "/uwb/range");
   this->declare_parameter("is_imu_ned", false);
+  this->declare_parameter("view_anchor", false);
 
   std::vector<uint64_t> tmp;
 
   this->get_parameter("anchor_pos_x", anchor_list_x_);
   this->get_parameter("anchor_pos_y", anchor_list_y_);
   this->get_parameter("anchor_pos_z", anchor_list_z_);
+
   this->get_parameter("uwb_topic", uwb_topic_);
   this->get_parameter("sim_sonar", sim_sonar_);
   this->get_parameter("is_imu_ned", imu_ned_);
+  this->get_parameter("view_anchor", view_anchor_);
 
   try {
     anchor_id_lists_ = this->get_parameter("anchor_id_lists").as_integer_array();
@@ -42,6 +45,9 @@ UWBLocalizer::UWBLocalizer() : Node("uwb_localizer_node") {
     uwb_struct_[uidx].anchor_position_y_ = anchor_list_y_[uidx];
     uwb_struct_[uidx].anchor_position_z_ = anchor_list_z_[uidx];
 
+    setUWBMarker(uwb_struct_[uidx]);
+    array_anchor_.markers.push_back(single_anchor_);
+
     anchor_positions_[uidx] =
         Vec3d(anchor_list_x_[uidx], anchor_list_y_[uidx], anchor_list_z_[uidx]);
   }  
@@ -57,6 +63,13 @@ UWBLocalizer::UWBLocalizer() : Node("uwb_localizer_node") {
 
   uwb_subscriber_ = this->create_subscription<uwb_driver::msg::UwbRange>(
       uwb_topic_, 10, std::bind(&UWBLocalizer::multilateration, this, _1));
+
+  if (view_anchor_)
+  {
+    uwb_anchor_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/uwb/anchors", 10);
+    
+    anchor_timer_ = this->create_wall_timer(100ms, std::bind(&UWBLocalizer::anchor_timer, this));
+  }
 
   RCLCPP_INFO(this->get_logger(), "Success initializing UWB Localizer Node and %d Anchors Positions.", num_anchors_);
 }
@@ -195,5 +208,36 @@ void UWBLocalizer::setCurrentPose(const geometry_msgs::msg::PoseStamped::SharedP
 }
 
 Vec3d UWBLocalizer::getCurrentPosition() { return drone_pos; }
+
+void UWBLocalizer::anchor_timer()
+{
+  uwb_anchor_publisher_->publish(array_anchor_);
+}
+
+void UWBLocalizer::setUWBMarker(uwbMeasurement uwb_info)
+{
+  single_anchor_.header.frame_id = "map";
+  single_anchor_.header.stamp = this->get_clock()->now();
+  single_anchor_.ns = "uwb_anchors";
+  single_anchor_.id = uwb_info.anchor_id;
+  single_anchor_.type = visualization_msgs::msg::Marker::CUBE;
+  single_anchor_.action = visualization_msgs::msg::Marker::ADD;
+
+  single_anchor_.pose.position.x = uwb_info.anchor_position_x_;
+  single_anchor_.pose.position.y = -uwb_info.anchor_position_y_;
+  single_anchor_.pose.position.z = -uwb_info.anchor_position_z_;
+
+  single_anchor_.scale.x = 0.2;
+  single_anchor_.scale.y = 0.2;
+  single_anchor_.scale.z = 0.2;
+  single_anchor_.pose.orientation.w = 1.0;
+
+  single_anchor_.color.a = 1.0; // Alpha
+  single_anchor_.color.r = 0.0; // Red
+  single_anchor_.color.g = 1.0; // Green
+  single_anchor_.color.b = 0.0; // Blue
+  single_anchor_.lifetime = rclcpp::Duration(0, 0);
+}
+
 
 } // namespace navigation
