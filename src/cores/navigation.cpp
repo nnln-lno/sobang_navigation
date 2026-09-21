@@ -30,8 +30,15 @@ Navigation::Navigation() : Node("sobang_navigation_node"), count_(0) {
   else if ( imu_topic_ == "/fmu/out/sensor_combined" )
   {
     px4_imu_subscriber_ = this->create_subscription<px4_msgs::msg::SensorCombined>(imu_topic_, sensor_qos, std::bind(&Navigation::px4_imu_callback, this, _1));
-    
-    RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined");
+          
+    if (use_imu_dt_)
+    {
+      RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined, using IMU dt from PX4");
+    }
+    else
+    {
+      RCLCPP_INFO(this->get_logger(), "PX4 IMU detected : topic name = /fmu/out/sensor_combined, using IMU dt from ROS2");
+    }
   }
   // IMU TOPIC CONDITION
   
@@ -166,8 +173,8 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
 {
   px4_msgs::msg::SensorCombined::SharedPtr msg = std::make_shared<px4_msgs::msg::SensorCombined>(*i_msg);
 
-  sample_time_ = msg->timestamp; // For Real Flight
-  // sample_time_ = this->get_clock()->now().nanoseconds() / 1000; // For Simulation
+  // sample_time_ = msg->timestamp; // For Real Flight
+  sample_time_ = this->get_clock()->now().nanoseconds() / 1000; // For Simulation
   setImuCurrentTime(msg->timestamp * 1e-6);  
 
   imu_cnt++;
