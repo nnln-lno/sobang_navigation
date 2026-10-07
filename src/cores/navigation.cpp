@@ -257,6 +257,12 @@ void Navigation::px4_imu_callback(const px4_msgs::msg::SensorCombined::SharedPtr
 
   if (has_clone_) { Pxc = (Fk * Pxc); }
 
+  if ( std::abs(msg->accelerometer_m_s2[2]) > 9.80665 + 1.0)
+  {
+    RCLCPP_INFO_ONCE(this->get_logger(), "[INFO] Drone start flying! (%.3f m/s^2)", std::abs(msg->accelerometer_m_s2[2]));
+    is_flying_ = true;
+  }
+
   // ------------------------ Visualization Part ------------------------
   publishDronePath(getState().position, getState().quaternion);
 
@@ -464,20 +470,39 @@ void Navigation::uwbPositionCallback(const geometry_msgs::msg::PointStamped::Sha
     // ---------------------------------------------------------------------
 
     px4_pose.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-    px4_pose.timestamp_sample = px4_pose.timestamp;
+    px4_pose.timestamp_sample = sample_time_;
     px4_pose.pose_frame = px4_msgs::msg::VehicleOdometry::POSE_FRAME_NED;
 
     px4_pose.position = {(float)px4_cur_pos(0), (float)px4_cur_pos(1), (float)px4_cur_pos(2)};
     px4_pose.q = {(float)px4_cur_att(0), (float)px4_cur_att(1), (float)px4_cur_att(2), (float)px4_cur_att(3)};
 
     px4_pose.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_NED;
-    px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+    if (use_ekf_vel_)
+    {
+      Vec3d px4_ego_vel = Cbi * Cir * radar_estimator_.getEgoVelocity();
+      px4_pose.velocity = {(float)px4_ego_vel(0), (float)px4_ego_vel(1), (float)px4_ego_vel(2)};
+      px4_pose.velocity_variance = {(float)px4_vel_cov_(0), (float)px4_vel_cov_(1), (float)px4_vel_cov_(2)};
+    }
+    else
+    {
+      px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+      px4_pose.velocity_variance = {0.01, 0.01, 0.01};
+    }    
 
     px4_pose.angular_velocity = {(float)omega(0), (float)omega(1), (float)omega(2)};
 
-    px4_pose.position_variance = {(float)px4_pos_cov_(0), (float)px4_pos_cov_(1), (float)px4_pos_cov_(2)};
-    px4_pose.velocity_variance = {0.01, 0.01, 0.01};
-    px4_pose.orientation_variance = {(float)px4_att_cov_(0), (float)px4_att_cov_(1), (float)px4_att_cov_(2)};
+    if (use_const_cov_)
+    {                                 
+      px4_pose.position_variance = {(float)px4_pos_cov_(0), (float)px4_pos_cov_(1),
+                                    (float)px4_pos_cov_(2)};
+      px4_pose.orientation_variance = {(float)px4_att_cov_(0), (float)px4_att_cov_(1),
+                                      (float)px4_att_cov_(2)};
+    } 
+    else
+    {
+      px4_pose.position_variance = {(float)Pk(0, 0), (float)Pk(1, 1), (float)Pk(2, 2)};
+      px4_pose.orientation_variance = {(float)Pk(3, 3), (float)Pk(4, 4), (float)Pk(5, 5)};
+    }
 
     px4_state_publisher_->publish(px4_pose);
   }
@@ -581,7 +606,7 @@ void Navigation::px4_sonarCallback(const px4_msgs::msg::DistanceSensor::SharedPt
 
 void Navigation::optimized_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
-
+  RCLCPP_INFO(this->get_logger(), "[INFO] Received optimized pose from GCS.");
 }
 
 // Basic Navigation Functions
@@ -768,7 +793,7 @@ void Navigation::timeUpdate(const drState prev_state, Vec3d ego_velocity, Vec3d 
 
 void Navigation::measurementUpdate(const drState predicted_state, VecXd residual, MatXd Hk, MatXd Rk) {
   
-  if (!init_alignment_) {
+  if (!init_alignment_ && is_flying_) {
 
     const bool use_clone = has_clone_ && (Hk.cols() == 18);
 
@@ -907,16 +932,34 @@ void Navigation::px4_timer_callback() {
                   (float)px4_cur_att(2), (float)px4_cur_att(3)};
 
     px4_pose.velocity_frame = px4_msgs::msg::VehicleOdometry::VELOCITY_FRAME_NED;
-    px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+
+    if (use_ekf_vel_)
+    {
+      Vec3d px4_ego_vel = Cbi * Cir * radar_estimator_.getEgoVelocity();
+      px4_pose.velocity = {(float)px4_ego_vel(0), (float)px4_ego_vel(1), (float)px4_ego_vel(2)};
+      px4_pose.velocity_variance = {(float)px4_vel_cov_(0), (float)px4_vel_cov_(1), (float)px4_vel_cov_(2)};
+    }
+    else
+    {
+      px4_pose.velocity.fill(std::numeric_limits<float>::quiet_NaN());
+      px4_pose.velocity_variance = {0.01, 0.01, 0.01};
+    }    
 
     px4_pose.angular_velocity = {(float)omega(0), (float)omega(1),
                                  (float)omega(2)};
 
-    px4_pose.position_variance = {(float)px4_pos_cov_(0), (float)px4_pos_cov_(1),
-                                  (float)px4_pos_cov_(2)};
-    px4_pose.velocity_variance = {0.01, 0.01, 0.01};
-    px4_pose.orientation_variance = {(float)px4_att_cov_(0), (float)px4_att_cov_(1),
-                                     (float)px4_att_cov_(2)};
+    if (use_const_cov_)
+    {                                 
+      px4_pose.position_variance = {(float)px4_pos_cov_(0), (float)px4_pos_cov_(1),
+                                    (float)px4_pos_cov_(2)};      
+      px4_pose.orientation_variance = {(float)px4_att_cov_(0), (float)px4_att_cov_(1),
+                                      (float)px4_att_cov_(2)};
+    } 
+    else
+    {
+      px4_pose.position_variance = {(float)Pk(0, 0), (float)Pk(1, 1), (float)Pk(2, 2)};
+      px4_pose.orientation_variance = {(float)Pk(3, 3), (float)Pk(4, 4), (float)Pk(5, 5)};
+    }
 
     px4_state_publisher_->publish(px4_pose);    
   }
@@ -1124,6 +1167,7 @@ void Navigation::param_setting() {
   this->declare_parameter("radar_scale_noise", std::vector<double>{0.0001, 0.0001, 0.0001});
   
   this->declare_parameter("px4_pos_cov", std::vector<double>{0.01, 0.01, 0.01});
+  this->declare_parameter("px4_vel_cov", std::vector<double>{0.01, 0.09, 1.00});
   this->declare_parameter("px4_att_cov", std::vector<double>{0.01, 0.01, 0.01});
 
   this->declare_parameter("icp_cov", std::vector<double>{1.5, 1.5, 1e3, 1e3, 1e3, 5});                          
@@ -1186,9 +1230,11 @@ void Navigation::param_setting() {
   init_acc_bias_ = Vec3d{init_acc_bias_vec[0], init_acc_bias_vec[1], init_acc_bias_vec[2]};
 
   std::vector<double> px4_pos_vec = this->get_parameter("px4_pos_cov").as_double_array();
+  std::vector<double> px4_vel_vec = this->get_parameter("px4_vel_cov").as_double_array();
   std::vector<double> px4_att_vec = this->get_parameter("px4_att_cov").as_double_array();
 
   px4_pos_cov_ = Vec3d{px4_pos_vec[0], px4_pos_vec[1], px4_pos_vec[2]};
+  px4_vel_cov_ = Vec3d{px4_vel_vec[0], px4_vel_vec[1], px4_vel_vec[2]};
   px4_att_cov_ = Vec3d{px4_att_vec[0], px4_att_vec[1], px4_att_vec[2]};
 
   std::vector<double> icp_cov_vec = this->get_parameter("icp_cov").as_double_array();
@@ -1259,6 +1305,12 @@ void Navigation::param_setting() {
 
   this->declare_parameter("sonar_sim", false);
   this->get_parameter("sonar_sim", sonar_sim_);
+
+  this->declare_parameter("use_const_cov", false);
+  this->get_parameter("use_const_cov", use_const_cov_);
+
+  this->declare_parameter("use_ekf_vel", false);
+  this->get_parameter("use_ekf_vel", use_ekf_vel_);
 
   this->declare_parameter("view_path", false);
   this->get_parameter("view_path", view_path_);

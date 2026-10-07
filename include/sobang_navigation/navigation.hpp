@@ -92,6 +92,7 @@ public:
   Vec12d process_noise = Vec12d::Zero();
   
   Vec3d px4_pos_cov_ = Vec3d::Zero();
+  Vec3d px4_vel_cov_ = Vec3d::Zero();
   Vec3d px4_att_cov_ = Vec3d::Zero();
   
   /** @name Sensor Noise Covariance
@@ -136,6 +137,7 @@ public:
   std::string sonar_topic_ = "/fmu/out/distance_sensor"; // Sonar 센서 토픽 이름
 
   bool init_alignment_ = true; // 초기정렬 종료 여부  
+  bool is_flying_ = false;
   bool do_align_ = true; // 초기정렬 수행 여부
   bool use_imu_dt_ = true; // True 시, IMU 토픽에서 들어오는 dt값 사용.
 
@@ -143,6 +145,9 @@ public:
   bool view_path_ = false; // Rviz2에 경로정보 출력 여부
 
   bool sonar_sim_ = false;
+
+  bool use_const_cov_ = false; // True 시, PX4 EKF2에 전달되는 공분산 행렬을 nav_params.yaml에서 설정한 값으로 고정
+  bool use_ekf_vel_ = false; // True 시, PX4 EKF2에 전달되는 속도 정보를 nav_params.yaml에서 설정한 값으로 고정
 
   bool has_problems_ = false; // 레이더 센서의 문제 여부
 
